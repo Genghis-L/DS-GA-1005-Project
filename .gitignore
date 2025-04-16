@@ -1,0 +1,5 @@
+/venv/
+/codes/venv/
+**/venv/
+**/codes/venv/
+**/venv
