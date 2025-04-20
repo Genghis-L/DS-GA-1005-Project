@@ -67,7 +67,6 @@ class HMCSampler:
         Returns:
             Final position and momentum after L steps
         """
-        print("################", q0, p0)
         q = q0.copy()
         p = p0.copy()
         

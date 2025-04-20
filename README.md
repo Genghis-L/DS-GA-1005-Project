@@ -16,12 +16,28 @@ pip install -r requirements.txt
 ```
 
 ## Usage
-
+### Main Script
 The main script can be run with various command-line arguments. Basic usage:
 
 ```bash
 python main.py [options]
 ```
+
+### Experiment Script
+```bash
+python experiments.py
+```
+
+The script will:
+- Run both samplers on increasing dimensions
+- Show progress with tqdm
+- Generate plots and print summary statistics
+- Save results to 'dimension_comparison.png'
+This will help demonstrate:
+- How HMC scales better with dimension than Metropolis
+- The trade-off between computational cost and sample quality
+- The effect of dimension on acceptance rates
+- Overall sampling efficiency in high dimensions
 
 ### Default Parameters
 
@@ -105,3 +121,6 @@ Use `--save_plots` to save the visualizations to files.
 - HMC requires target distributions with implemented gradient
 - For high dimensions, consider using HMC over Metropolis
 - Adjust `scale_proposal` for Metropolis or `step_size` for HMC if acceptance rate is too low/high 
+
+
+
