@@ -33,6 +33,8 @@ The script will:
 - Show progress with tqdm
 - Generate plots and print summary statistics
 - Save results to 'dimension_comparison.png'
+
+
 This will help demonstrate:
 - How HMC scales better with dimension than Metropolis
 - The trade-off between computational cost and sample quality
