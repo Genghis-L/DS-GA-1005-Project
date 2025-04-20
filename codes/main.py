@@ -4,7 +4,7 @@ from typing import Callable, List, Any, Union
 from algos.metropolis import MetropolisSampler, NormalProposal
 from algos.hmc import HMCSampler
 from dists import NormalDistribution, BananaDistribution, MixtureDistribution, BaseDistribution
-from algos.visualization import plot_samples_1d, plot_samples_2d, plot_trace
+from algos.visualization import MCMCVisualizer
 
 def create_target_distribution(
     name: str,
@@ -87,35 +87,51 @@ def run_mcmc(
         )
     else:
         raise ValueError(f"Unknown sampler type: {sampler_type}")
-        
-    samples = sampler.run()
     
+    # Initialize visualizer if needed
     if visualize:
-        dim = len(samples[0])
-        prefix = f"{sampler_type}_{target.__class__.__name__}"
-        
-        # Plot trace
-        plot_trace(
-            samples,
-            title=f"Trace Plot - {target.__class__.__name__}",
-            save_path=f"{prefix}_trace.png" if save_plots else None
+        vis = MCMCVisualizer(
+            target=target,
+            update_interval=max(1, iterations // 100)  # Update ~100 times during sampling
         )
         
-        # Plot samples
-        if dim == 1:
-            plot_samples_1d(
-                samples,
-                target=target,
-                title=f"Samples - {target.__class__.__name__}",
-                save_path=f"{prefix}_samples.png" if save_plots else None
-            )
-        elif dim == 2:
-            plot_samples_2d(
-                samples,
-                target=target,
-                title=f"Samples - {target.__class__.__name__}",
-                save_path=f"{prefix}_samples.png" if save_plots else None
-            )
+        # Run sampling with visualization
+        samples = [initial()]
+        vis.update(samples[0])
+        
+        for _ in range(iterations):
+            if sampler_type == "metropolis":
+                current = samples[-1]
+                proposed = sampler_kwargs["proposal"](current)
+                acceptance_ratio = target(proposed) / target(current)
+                
+                if np.random.random() < acceptance_ratio:
+                    samples.append(proposed)
+                else:
+                    samples.append(current)
+            else:  # HMC
+                q0 = samples[-1]
+                p0 = np.random.standard_normal(size=q0.shape)
+                qL, pL = sampler._leapfrog(q0, p0)
+                
+                h0 = -target.log_density(q0) + (p0 * p0).sum() / 2
+                hL = -target.log_density(qL) + (pL * pL).sum() / 2
+                log_accept_ratio = h0 - hL
+                
+                if np.random.random() < np.exp(log_accept_ratio):
+                    samples.append(qL)
+                else:
+                    samples.append(q0)
+            
+            # Update visualization
+            vis.update(samples[-1])
+        
+        # Finalize visualization
+        prefix = f"{sampler_type}_{target.__class__.__name__}"
+        vis.finalize(save_path=f"{prefix}_final.png" if save_plots else None)
+    else:
+        # Run without visualization
+        samples = sampler.run()
     
     return samples
 
@@ -132,7 +148,7 @@ def main():
     parser.add_argument("--iterations", type=int, default=10000,
                        help="Number of MCMC iterations")
     parser.add_argument("--step_size", type=float, default=0.1,
-                       help="Step size for HMC or proposal scale for Metropolis")
+                       help="Step size for HMC")
     parser.add_argument("--scale_proposal", type=float, default=0.1,
                        help="Scale for the proposal distribution")
     parser.add_argument("--L", type=int, default=50,
