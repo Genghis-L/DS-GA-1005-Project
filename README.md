@@ -6,9 +6,12 @@ This repository contains implementations of Metropolis-Hastings and Hamiltonian 
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/AlexMan2000/DS-GA-1005-Project
 
 # Install dependencies
+cd codes
+conda env create -f environment.yml --prefix ./venv
+conda activate ./venv
 pip install -r requirements.txt
 ```
 
