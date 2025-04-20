@@ -83,7 +83,7 @@ python main.py --distribution banana --sampler hmc --step_size 0.1 --L 20
 2. **Banana Distribution** (`banana`)
    - Banana-shaped distribution (common MCMC test case)
    - Only supports 2D
-   - Need to manually set to `dim=2`
+   - Need to manually set to `--dim 2`
 
 3. **Mixture Distribution** (`mixture`)
    - Mixture of Gaussian distributions
