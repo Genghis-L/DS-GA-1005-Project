@@ -49,7 +49,7 @@ class HMCSampler:
         self.samples = []
         
         # Check if target has required methods for HMC
-        if not hasattr(target, 'grad_log_density') or target.grad_log_density(None) is None:
+        if not hasattr(target, 'grad_log_density'):
             raise ValueError("Target distribution must implement grad_log_density for HMC")
         
     def _leapfrog(
@@ -67,6 +67,7 @@ class HMCSampler:
         Returns:
             Final position and momentum after L steps
         """
+        print("################", q0, p0)
         q = q0.copy()
         p = p0.copy()
         

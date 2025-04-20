@@ -22,7 +22,7 @@ def create_target_distribution(
         return NormalDistribution(mean=mean, cov=cov)
     elif name == "banana":
         if dim != 2:
-            raise ValueError("Banana distribution only supports 2D")
+            raise ValueError("Banana distribution only supports 2D, please add --dim 2")
         return BananaDistribution(
             a=kwargs.get("a", 1.0),
             b=kwargs.get("b", 1.0)
