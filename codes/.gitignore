@@ -8,7 +8,6 @@
 **/*.pywz
 **/*.pywz
 
-*.png
 *.pdf
 *.html
 *.json
