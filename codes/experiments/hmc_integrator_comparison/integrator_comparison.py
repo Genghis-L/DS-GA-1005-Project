@@ -10,6 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from algos.hmc import HMCSampler, TargetDistribution
 from dists.normal import NormalDistribution
+from dists.donut import DonutDistribution
 
 class HMCWithIntegrator(HMCSampler):
     """HMC sampler with configurable integrator."""
@@ -26,6 +27,7 @@ class HMCWithIntegrator(HMCSampler):
     ):
         super().__init__(target, initial, iterations, L, step_size, mass_matrix)
         self.integrator = integrator
+        self.acceptance_rate = 0.0  # Initialize acceptance rate
         
     def _euler_integrator(
         self,
@@ -129,8 +131,10 @@ class HMCWithIntegrator(HMCSampler):
                 accepted += 1
             else:
                 self.samples.append(theta_t)
-                
-        print(f"HMC acceptance rate ({self.integrator}): {accepted/self.iterations:.2%}")
+        
+        # Store acceptance rate
+        self.acceptance_rate = accepted / self.iterations
+        print(f"HMC acceptance rate ({self.integrator}): {self.acceptance_rate:.2%}")
         return self.samples
 
 def compute_energy_error(sampler: HMCWithIntegrator, n_test: int = 100) -> float:
@@ -166,24 +170,59 @@ def compute_energy_error(sampler: HMCWithIntegrator, n_test: int = 100) -> float
 def run_comparison(
     n_samples: int = 1000,
     dim: int = 2,
+    target_dist: str = 'normal',
     target_std: float = 1.0,
-    step_sizes: list = [0.01, 0.05, 0.1, 0.2, 0.5],
+    donut_radius: float = 3.0,
+    donut_sigma2: float = 0.05,
+    step_sizes: list = [0.1, 0.5, 1.0],
     n_leapfrog_steps: int = 20,
     output_file: str = None
 ):
     """Run comparison of different HMC integrators."""
-    # Setup target distribution (standard normal)
-    target = NormalDistribution(
-        mean=np.zeros(dim),
-        cov=target_std**2 * np.eye(dim)
-    )
-    initial = lambda: np.zeros(dim)
+    # Setup target distribution
+    if target_dist == 'normal':
+        target = NormalDistribution(
+            mean=np.zeros(dim),
+            cov=target_std**2 * np.eye(dim)
+        )
+        initial = lambda: np.zeros(dim)
+        plot_range = (-3*target_std, 3*target_std)
+    else:  # donut
+        target = DonutDistribution(
+            radius=donut_radius,
+            sigma2=donut_sigma2,
+            dim=dim
+        )
+        initial = lambda: np.array([donut_radius] + [0.0] * (dim-1))  # Start on x-axis at radius
+        plot_range = (-4, 4)  # Fixed range for donut visualization
     
     integrators = ['euler', 'modified_euler', 'leapfrog']
     results = []
     
-    for integrator in integrators:
-        for step_size in step_sizes:
+    # Create figure for metrics comparison
+    fig_metrics, axes_metrics = plt.subplots(1, 3, figsize=(15, 5))
+    fig_metrics.suptitle(f"HMC Integrator Comparison - {target_dist.title()} Distribution ({dim}D)")
+    
+    # Create figure for sample visualization (one row per step size)
+    n_step_sizes = len(step_sizes)
+    fig_samples, axes_samples = plt.subplots(n_step_sizes, 3, figsize=(15, 5*n_step_sizes))
+    fig_samples.suptitle(f"HMC Integrator Sample Comparison - {target_dist.title()} Distribution ({dim}D)")
+    
+    if n_step_sizes == 1:
+        axes_samples = axes_samples.reshape(1, -1)
+    
+    # Plot settings for sample visualization
+    x = np.linspace(plot_range[0], plot_range[1], 100)
+    y = np.linspace(plot_range[0], plot_range[1], 100)
+    X, Y = np.meshgrid(x, y)
+    Z = np.zeros_like(X)
+    for i in range(len(x)):
+        for j in range(len(y)):
+            Z[j, i] = target(np.array([X[j, i], Y[j, i]]))
+    
+    # Run comparison for each integrator and step size
+    for step_idx, step_size in enumerate(step_sizes):
+        for int_idx, integrator in enumerate(integrators):
             # Run sampler
             start_time = time.time()
             sampler = HMCWithIntegrator(
@@ -198,90 +237,133 @@ def run_comparison(
             end_time = time.time()
             
             # Compute metrics
-            accept_rate = len(np.unique(samples, axis=0)) / len(samples)
             time_per_sample = (end_time - start_time) / n_samples
             energy_error = compute_energy_error(sampler)
             
             results.append({
                 'integrator': integrator,
                 'step_size': step_size,
-                'accept_rate': accept_rate,
+                'acc_rate': sampler.get_acceptance_rate(),
                 'time_per_sample': time_per_sample,
                 'energy_error': energy_error
             })
             
             print(f"\nResults for {integrator.upper()} (step_size={step_size}):")
-            print(f"  Acceptance rate: {accept_rate:.2%}")
+            print(f"  Acceptance rate: {sampler.get_acceptance_rate():.2%}")
             print(f"  Time per sample: {time_per_sample*1e6:.2f} μs")
             print(f"  Energy error: {energy_error:.2e}")
+            
+            # Plot samples for 2D case
+            if dim == 2:
+                ax = axes_samples[step_idx, int_idx]
+                # Plot target density contours
+                ax.contour(X, Y, Z, levels=10, colors='r', alpha=0.3)
+                # Plot samples
+                ax.scatter(samples[:, 0], samples[:, 1], alpha=0.1, s=1)
+                ax.set_title(f"{integrator.title()}\n(ε={step_size}, L={n_leapfrog_steps})")
+                ax.set_xlabel('x')
+                ax.set_ylabel('y')
+                
+                # Add statistics as text
+                stat_text = (f"Acc. Rate: {sampler.get_acceptance_rate():.2%}\n"
+                           f"Energy Error: {energy_error:.2e}")
+                ax.text(0.02, 0.98, stat_text,
+                        transform=ax.transAxes,
+                        verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                
+                # Set consistent axis limits
+                ax.set_xlim(plot_range)
+                ax.set_ylim(plot_range)
     
-    # Plot results
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    fig.suptitle(f"HMC Integrator Comparison ({dim}D)")
-    
-    # Group results by integrator
+    # Group results by integrator for metric plots
     for integrator in integrators:
         int_results = [r for r in results if r['integrator'] == integrator]
-        step_sizes = [r['step_size'] for r in int_results]
-        accept_rates = [r['accept_rate'] for r in int_results]
+        step_sizes_plot = [r['step_size'] for r in int_results]
+        acc_rates = [r['acc_rate'] for r in int_results]
         times = [r['time_per_sample'] for r in int_results]
         errors = [r['energy_error'] for r in int_results]
         
         # Plot acceptance rate
-        axes[0].plot(step_sizes, accept_rates, 'o-', label=integrator)
-        axes[0].set_xlabel('Step Size')
-        axes[0].set_ylabel('Acceptance Rate')
-        axes[0].set_title('Acceptance Rate vs Step Size')
-        axes[0].grid(True)
-        axes[0].legend()
+        axes_metrics[0].plot(step_sizes_plot, acc_rates, 'o-', label=integrator)
+        axes_metrics[0].set_xlabel('Step Size')
+        axes_metrics[0].set_ylabel('Acceptance Rate')
+        axes_metrics[0].set_title('Acceptance Rate vs Step Size')
+        axes_metrics[0].grid(True)
+        axes_metrics[0].legend()
         
         # Plot time per sample
-        axes[1].plot(step_sizes, np.array(times)*1e6, 'o-', label=integrator)
-        axes[1].set_xlabel('Step Size')
-        axes[1].set_ylabel('Time per Sample (μs)')
-        axes[1].set_title('Computation Time vs Step Size')
-        axes[1].grid(True)
-        axes[1].legend()
+        axes_metrics[1].plot(step_sizes_plot, np.array(times)*1e6, 'o-', label=integrator)
+        axes_metrics[1].set_xlabel('Step Size')
+        axes_metrics[1].set_ylabel('Time per Sample (μs)')
+        axes_metrics[1].set_title('Computation Time vs Step Size')
+        axes_metrics[1].grid(True)
+        axes_metrics[1].legend()
         
         # Plot energy error
-        axes[2].plot(step_sizes, errors, 'o-', label=integrator)
-        axes[2].set_xlabel('Step Size')
-        axes[2].set_ylabel('Relative Energy Error')
-        axes[2].set_title('Energy Conservation Error')
-        axes[2].set_yscale('log')
-        axes[2].grid(True)
-        axes[2].legend()
+        axes_metrics[2].plot(step_sizes_plot, errors, 'o-', label=integrator)
+        axes_metrics[2].set_xlabel('Step Size')
+        axes_metrics[2].set_ylabel('Relative Energy Error')
+        axes_metrics[2].set_title('Energy Conservation Error')
+        axes_metrics[2].set_yscale('log')
+        axes_metrics[2].grid(True)
+        axes_metrics[2].legend()
     
-    plt.tight_layout()
+    # Save plots
     if output_file:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-    plt.close()
+        base_name = output_file.rsplit('.', 1)[0]
+        fig_metrics.savefig(f"{base_name}_metrics.png", dpi=300, bbox_inches='tight')
+        if dim == 2:
+            fig_samples.savefig(f"{base_name}_samples.png", dpi=300, bbox_inches='tight')
+    
+    plt.close('all')
 
 def main():
     parser = argparse.ArgumentParser(description="Compare different HMC integrators")
+    parser.add_argument("--distribution", choices=['normal', 'donut'], default='normal',
+                       help="Target distribution (default: normal)")
     parser.add_argument("--dim", type=int, default=2,
                        help="Number of dimensions (default: 2)")
     parser.add_argument("--n-samples", type=int, default=1000,
                        help="Number of samples to generate (default: 1000)")
     parser.add_argument("--target-std", type=float, default=1.0,
                        help="Standard deviation of target normal distribution (default: 1.0)")
+    parser.add_argument("--donut-radius", type=float, default=3.0,
+                       help="Target radius for donut distribution (default: 3.0)")
+    parser.add_argument("--donut-sigma2", type=float, default=0.05,
+                       help="Shell thickness for donut distribution (default: 0.05)")
     parser.add_argument("--step-sizes", type=float, nargs='+',
-                       default=[0.01, 0.05, 0.1, 0.2, 0.5],
-                       help="Step sizes to test (default: 0.01 0.05 0.1 0.2 0.5)")
+                       default=[0.1, 0.5, 1.0],
+                       help="Step sizes to test")
     parser.add_argument("--n-leapfrog", type=int, default=20,
                        help="Number of integration steps (default: 20)")
     parser.add_argument("--output", type=str, default=None,
-                       help="Output file name (default: integrator_comparison_{dim}d.png)")
+                       help="Output file name (default: integrator_comparison_{dist}_{dim}d.png)")
     
     args = parser.parse_args()
     
     if args.output is None:
-        args.output = f'integrator_comparison_{args.dim}d.png'
+        args.output = f'integrator_comparison_{args.distribution}_{args.dim}d.png'
+    
+    print(f"\nRunning comparison for {args.distribution} distribution in {args.dim} dimensions...")
+    print(f"Parameters:")
+    if args.distribution == 'normal':
+        print(f"  - Target std: {args.target_std}")
+    else:
+        print(f"  - Donut radius: {args.donut_radius}")
+        print(f"  - Shell thickness: {args.donut_sigma2}")
+    print(f"  - Number of samples: {args.n_samples}")
+    print(f"  - Step sizes: {args.step_sizes}")
+    print(f"  - Leapfrog steps: {args.n_leapfrog}")
+    print(f"  - Output file: {args.output}\n")
     
     run_comparison(
         n_samples=args.n_samples,
         dim=args.dim,
+        target_dist=args.distribution,
         target_std=args.target_std,
+        donut_radius=args.donut_radius,
+        donut_sigma2=args.donut_sigma2,
         step_sizes=args.step_sizes,
         n_leapfrog_steps=args.n_leapfrog,
         output_file=args.output

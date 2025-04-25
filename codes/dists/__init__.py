@@ -7,5 +7,6 @@ __all__ = [
     'BaseDistribution',
     'NormalDistribution',
     'BananaDistribution',
-    'MixtureDistribution'
+    'MixtureDistribution',
+    'DonutDistribution'
 ] 

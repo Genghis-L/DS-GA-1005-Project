@@ -73,6 +73,41 @@ python main.py --distribution mixture --scale_proposal 0.5 --iterations 5000
 python main.py --distribution banana --sampler hmc --step_size 0.1 --L 20
 ```
 
+#### Available Distributions
+
+1. **Normal Distribution** (`normal`)
+   - Multivariate normal distribution
+   - Supports any dimension
+   - Parameters controlled by `--dim`
+
+2. **Banana Distribution** (`banana`)
+   - Banana-shaped distribution (common MCMC test case)
+   - Only supports 2D
+   - Need to manually set to `--dim 2`
+
+3. **Mixture Distribution** (`mixture`)
+   - Mixture of Gaussian distributions
+   - Supports any dimension
+   - Default: 2 components with random means
+
+#### Visualization
+
+When `--visualize` is enabled:
+- 1D distributions: Histogram of samples with target density overlay
+- 2D distributions: Scatter plot of samples with density contours
+- All dimensions: Trace plots showing sample evolution
+
+Use `--save_plots` to save the visualizations to files.
+
+#### Notes
+
+- The Banana distribution only works with `dim=2`
+- HMC requires target distributions with implemented gradient
+- For high dimensions, consider using HMC over Metropolis
+- Adjust `scale_proposal` for Metropolis or `step_size` for HMC if acceptance rate is too low/high 
+
+```
+
 ### Experiment Scripts
 
 #### 1. Donut Distribution Comparison (`experiments/donut_comparison.py`)
@@ -177,19 +212,37 @@ Use `python experiments/proposal_comparison.py --help` for all options.
 
 #### 3. HMC Integrator Comparison (`experiments/integrator_comparison.py`)
 
-This script compares different numerical integrators for HMC: Euler, Modified Euler, and Leapfrog. It analyzes acceptance rates, energy conservation, and computational efficiency.
+This script compares different numerical integrators for HMC: Euler, Modified Euler, and Leapfrog. It analyzes acceptance rates, energy conservation, and computational efficiency across different target distributions.
 
 **Default Parameters:**
 ```python
---dim=2                    # Dimension of the probability space
+--distribution="normal"    # Target distribution to sample from
+--dim=2                   # Dimension of the probability space
 --n-samples=1000          # Number of samples to generate
 --target-std=1.0          # Standard deviation of target normal distribution
---step-sizes=[0.01, 0.05, 0.1, 0.2, 0.5]  # Step sizes to test
---n-leapfrog=20           # Number of integration steps
---output="integrator_comparison_2d.png"  # Output file path
+--donut-radius=3.0        # Target radius for donut distribution
+--donut-sigma2=0.05       # Shell thickness for donut distribution
+--step-sizes=[0.1, 0.5, 1.0]  # Step sizes to test
+--n-leapfrog=20          # Number of integration steps
+--output="integrator_comparison_{dist}_{dim}d.png"  # Output file path
 ```
 
 **Examples:**
+
+*   **Compare on normal distribution (default):**
+    ```bash
+    python experiments/integrator_comparison.py
+    ```
+
+*   **Compare on donut distribution:**
+    ```bash
+    python experiments/integrator_comparison.py --distribution donut
+    ```
+
+*   **Custom donut parameters:**
+    ```bash
+    python experiments/integrator_comparison.py --distribution donut --donut-radius 2.0 --donut-sigma2 0.1
+    ```
 
 *   **Compare in higher dimensions:**
     ```bash
@@ -200,6 +253,17 @@ This script compares different numerical integrators for HMC: Euler, Modified Eu
     ```bash
     python experiments/integrator_comparison.py --step-sizes 0.01 0.05 0.1 --n-leapfrog 50
     ```
+
+The script generates two types of plots:
+1. `*_metrics.png`: Shows comparison of:
+   - Acceptance rates vs step size
+   - Computation time vs step size
+   - Energy conservation error vs step size
+2. `*_samples.png` (for 2D only): Shows:
+   - Sample distributions for each integrator
+   - Target density contours
+   - Acceptance rates and energy errors
+   - One row per step size, one column per integrator
 
 #### 4. High-Dimensional Gaussian Comparison (`experiments/gaussian_comparison.py`)
 
@@ -322,35 +386,32 @@ The visualization demonstrates key properties of each integrator:
 - Modified Euler's method: Better energy conservation
 - Leapfrog method: Excellent energy conservation even with larger step sizes
 
-## Available Distributions
+#### 6. Sample Visualization Comparison
 
-1. **Normal Distribution** (`normal`)
-   - Multivariate normal distribution
-   - Supports any dimension
-   - Parameters controlled by `--dim`
+Compare different sampling methods on 2D distributions:
 
-2. **Banana Distribution** (`banana`)
-   - Banana-shaped distribution (common MCMC test case)
-   - Only supports 2D
-   - Need to manually set to `--dim 2`
+```bash
+# Compare all methods on donut distribution
+python experiments/sample_visualization_comparison.py
 
-3. **Mixture Distribution** (`mixture`)
-   - Mixture of Gaussian distributions
-   - Supports any dimension
-   - Default: 2 components with random means
+# Use banana distribution with custom parameters
+python experiments/sample_visualization_comparison.py \
+    --distribution banana \
+    --n_samples 10000 \
+    --metropolis_scales 0.1 0.3 0.5 \
+    --hmc_step_sizes 0.05 0.1 \
+    --hmc_n_steps 30 50
+```
 
-## Visualization
+The script produces:
+- Sample scatter plots with target density contours
+- Acceptance rates for each method
+- Effective Sample Size (ESS)
+- ESS per second (sampling efficiency)
 
-When `--visualize` is enabled:
-- 1D distributions: Histogram of samples with target density overlay
-- 2D distributions: Scatter plot of samples with density contours
-- All dimensions: Trace plots showing sample evolution
+Default parameters:
+- `n_samples`: 5000
+- `metropolis_scales`: [0.1, 0.5, 1.0]
+- `hmc_step_sizes`: [0.1]
+- `hmc_n_steps`: [50]
 
-Use `--save_plots` to save the visualizations to files.
-
-## Notes
-
-- The Banana distribution only works with `dim=2`
-- HMC requires target distributions with implemented gradient
-- For high dimensions, consider using HMC over Metropolis
-- Adjust `scale_proposal` for Metropolis or `step_size` for HMC if acceptance rate is too low/high 
