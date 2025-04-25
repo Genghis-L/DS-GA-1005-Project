@@ -68,6 +68,52 @@ def compute_ess(samples: np.ndarray) -> float:
     ess = n / (1 + 2 * np.sum(acf[:max_lag]))
     return max(1.0, ess)  # Ensure ESS is at least 1
 
+def plot_trajectories(
+    samples_dict: dict,
+    scale: float,
+    output_prefix: str,
+    dim: int,
+    short_run: bool = True
+):
+    """Plot trajectory comparison between different proposal distributions."""
+    n_proposals = len(samples_dict)
+    fig, axes = plt.subplots(n_proposals, 1, figsize=(12, 4*n_proposals))
+    if n_proposals == 1:
+        axes = [axes]
+    
+    # For short run (first 200 iterations) or long run (first 1000 iterations)
+    if short_run:
+        n_samples = 200
+        title = "First 200 iterations"
+    else:
+        n_samples = 1000
+        title = f"First {n_samples} iterations"
+    
+    # Get global y-limits for consistent scale
+    all_samples = np.concatenate([samples[:n_samples, 0] for samples in samples_dict.values()])
+    ymin, ymax = all_samples.min(), all_samples.max()
+    margin = 0.1 * (ymax - ymin)
+    ymin -= margin
+    ymax += margin
+    
+    # Plot each proposal's trajectory
+    for ax, (prop_type, samples) in zip(axes, samples_dict.items()):
+        traj = samples[:n_samples, 0]  # First coordinate
+        ax.plot(range(n_samples), traj, 'k.', markersize=2)
+        ax.set_title(f"{prop_type} Proposal (scale={scale})")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("First position coordinate")
+        ax.grid(True)
+        ax.set_ylim(ymin, ymax)
+    
+    plt.suptitle(title)
+    plt.tight_layout()
+    
+    # Save plot
+    suffix = "short" if short_run else "long"
+    plt.savefig(f"{output_prefix}_trajectory_{suffix}_scale{scale:.1f}_{dim}d.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
 def run_comparison(
     n_samples: int = 10000,
     dim: int = 1,
@@ -86,8 +132,11 @@ def run_comparison(
     
     results = []
     
-    for prop_type in proposal_types:
-        for scale in scales:
+    for scale in scales:
+        # Store samples for trajectory plots
+        samples_dict = {}
+        
+        for prop_type in proposal_types:
             # Create proposal
             if prop_type == 'normal':
                 proposal = NormalProposal(scale)
@@ -106,6 +155,9 @@ def run_comparison(
             )
             samples = np.array(sampler.run())
             end_time = time.time()
+            
+            # Store samples for trajectory plots
+            samples_dict[prop_type] = samples
             
             # Compute metrics
             accept_rate = len(np.unique(samples, axis=0)) / len(samples)
@@ -137,8 +189,12 @@ def run_comparison(
             print(f"  Time per sample: {time_per_sample*1e6:.2f} μs")
             print(f"  ESS: {ess:.1f}")
             print(f"  ESS/s: {ess/(end_time - start_time) if ess > 0 else 0.0:.1f}")
+        
+        # Generate trajectory plots for this scale
+        plot_trajectories(samples_dict, scale, output_file.replace('.png', ''), dim, short_run=True)
+        plot_trajectories(samples_dict, scale, output_file.replace('.png', ''), dim, short_run=False)
     
-    # Plot results
+    # Plot comparison metrics
     fig, axes = plt.subplots(2, 2, figsize=(15, 12))
     fig.suptitle(f"Proposal Distribution Comparison ({dim}D)")
     
@@ -184,8 +240,7 @@ def run_comparison(
         axes[1,1].legend()
     
     plt.tight_layout()
-    if output_file:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+    plt.savefig(output_file, dpi=300, bbox_inches='tight')
     plt.close()
 
 def main():

@@ -117,7 +117,7 @@ Use `python experiments/donut_comparison.py --help` for all options.
 
 #### 2. Proposal Distribution Comparison (`experiments/proposal_comparison.py`)
 
-This script compares different proposal distributions for the Metropolis sampler, including Normal, Student's t, and Uniform proposals. It analyzes acceptance rates, ESS (Effective Sample Size), and computational efficiency.
+This script compares different proposal distributions for the Metropolis sampler, including Normal, Student's t, and Uniform proposals. It analyzes acceptance rates, ESS (Effective Sample Size), computational efficiency, and mixing behavior through trajectory plots.
 
 **Default Parameters:**
 ```python
@@ -126,8 +126,26 @@ This script compares different proposal distributions for the Metropolis sampler
 --target-std=1.0          # Standard deviation of target normal distribution
 --proposal-types=['normal', 'student-t', 'uniform']  # Proposal types to compare
 --scales=[0.1, 0.5, 1.0, 2.0, 5.0]  # Scales to test for each proposal
---output="proposal_comparison_1d.png"  # Output file path
+--output="proposal_comparison_1d.png"  # Output file prefix
 ```
+
+**Running the script:**
+```bash
+python experiments/proposal_comparison.py
+```
+
+This will generate:
+1. Trajectory plots for each scale value:
+   - Short run plots (first 200 iterations): `proposal_comparison_1d_trajectory_short_scale{scale}.png`
+   - Long run plots (first 1000 iterations): `proposal_comparison_1d_trajectory_long_scale{scale}.png`
+   - One subplot per proposal type
+   - First coordinate's position over time
+   - Matching y-axis limits for fair comparison
+2. Performance metric plots (`proposal_comparison_1d.png`):
+   - Acceptance rate vs scale
+   - Computation time vs scale
+   - ESS vs scale
+   - ESS per second vs scale
 
 **Examples:**
 
@@ -140,6 +158,22 @@ This script compares different proposal distributions for the Metropolis sampler
     ```bash
     python experiments/proposal_comparison.py --dim 2 --scales 0.1 0.5 1.0
     ```
+
+*   **Adjust target distribution:**
+    ```bash
+    python experiments/proposal_comparison.py --target-std 2.0
+    ```
+
+*   **Custom output prefix:**
+    ```bash
+    python experiments/proposal_comparison.py --output "my_proposal_comparison"
+    ```
+    This will generate:
+    - `my_proposal_comparison_trajectory_short_scale{scale}.png`
+    - `my_proposal_comparison_trajectory_long_scale{scale}.png`
+    - `my_proposal_comparison.png`
+
+Use `python experiments/proposal_comparison.py --help` for all options.
 
 #### 3. HMC Integrator Comparison (`experiments/integrator_comparison.py`)
 
