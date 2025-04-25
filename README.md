@@ -167,6 +167,60 @@ This script compares different numerical integrators for HMC: Euler, Modified Eu
     python experiments/integrator_comparison.py --step-sizes 0.01 0.05 0.1 --n-leapfrog 50
     ```
 
+#### 4. High-Dimensional Gaussian Comparison (`experiments/gaussian_comparison.py`)
+
+This script compares the performance (Effective Sample Size, Acceptance Rate, Time) of Metropolis and HMC when sampling from a high-dimensional standard Gaussian distribution.
+
+**Default Parameters:**
+```python
+--dimensions=[2, 5, 10, 20, 50, 100]  # Dimensions to test
+--n-samples=1000                      # Number of samples per dimension
+--n-warmup=1000                       # Number of warmup samples
+--hmc-step-size=0.1                   # Step size for HMC
+--hmc-leapfrog-steps=50               # Number of leapfrog steps for HMC
+--metropolis-scale=0.1                # Scale for Metropolis proposal
+--output="dimension_comparison.png"    # Output file path
+```
+
+**Running the script:**
+```bash
+python experiments/gaussian_comparison.py
+```
+
+This will:
+*   Run the comparison for dimensions [2, 5, 10, 20, 50, 100]
+*   Print summary tables to the console showing:
+    - Effective Sample Size (ESS) for each dimension
+    - Acceptance rates for both samplers
+    - Time taken per sample
+*   Save comparison plots to `dimension_comparison.png` in the `codes` directory
+
+**Examples:**
+
+*   **Test specific dimensions:**
+    ```bash
+    python experiments/gaussian_comparison.py --dimensions 2 5 10
+    ```
+
+*   **Custom sample size and warmup:**
+    ```bash
+    python experiments/gaussian_comparison.py --n-samples 2000 --n-warmup 500
+    ```
+
+*   **Custom HMC parameters:**
+    ```bash
+    python experiments/gaussian_comparison.py --hmc-step-size 0.05 --hmc-leapfrog-steps 100
+    ```
+
+*   **Custom Metropolis scale:**
+    ```bash
+    python experiments/gaussian_comparison.py --metropolis-scale 0.2
+    ```
+
+Use `python experiments/gaussian_comparison.py --help` for all options.
+
+
+
 ## Available Distributions
 
 1. **Normal Distribution** (`normal`)
