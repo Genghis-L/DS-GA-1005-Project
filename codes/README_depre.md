@@ -115,57 +115,57 @@ python experiments/donut_comparison.py
 
 Use `python experiments/donut_comparison.py --help` for all options.
 
-#### 2. Proposal Distribution Comparison (`experiments/proposal_comparison.py`)
+#### 2. High-Dimensional Gaussian Comparison (`experiments/gaussian_comparison.py`)
 
-This script compares different proposal distributions for the Metropolis sampler, including Normal, Student's t, and Uniform proposals. It analyzes acceptance rates, ESS (Effective Sample Size), and computational efficiency.
-
-**Default Parameters:**
-```python
---dim=1                    # Dimension of the probability space
---n-samples=10000         # Number of samples to generate
---target-std=1.0          # Standard deviation of target normal distribution
---proposal-types=['normal', 'student-t', 'uniform']  # Proposal types to compare
---scales=[0.1, 0.5, 1.0, 2.0, 5.0]  # Scales to test for each proposal
---output="proposal_comparison_1d.png"  # Output file path
-```
-
-**Examples:**
-
-*   **Compare specific proposal types:**
-    ```bash
-    python experiments/proposal_comparison.py --proposal-types normal student-t
-    ```
-
-*   **Custom scales and dimensions:**
-    ```bash
-    python experiments/proposal_comparison.py --dim 2 --scales 0.1 0.5 1.0
-    ```
-
-#### 3. HMC Integrator Comparison (`experiments/integrator_comparison.py`)
-
-This script compares different numerical integrators for HMC: Euler, Modified Euler, and Leapfrog. It analyzes acceptance rates, energy conservation, and computational efficiency.
+This script compares the performance (Effective Sample Size, Acceptance Rate, Time) of Metropolis and HMC when sampling from a high-dimensional standard Gaussian distribution.
 
 **Default Parameters:**
 ```python
---dim=2                    # Dimension of the probability space
---n-samples=1000          # Number of samples to generate
---target-std=1.0          # Standard deviation of target normal distribution
---step-sizes=[0.01, 0.05, 0.1, 0.2, 0.5]  # Step sizes to test
---n-leapfrog=20           # Number of integration steps
---output="integrator_comparison_2d.png"  # Output file path
+--dimensions=[2, 5, 10, 20, 50, 100]  # Dimensions to test
+--n-samples=1000                      # Number of samples per dimension
+--n-warmup=1000                       # Number of warmup samples
+--hmc-step-size=0.1                   # Step size for HMC
+--hmc-leapfrog-steps=50               # Number of leapfrog steps for HMC
+--metropolis-scale=0.1                # Scale for Metropolis proposal
+--output="dimension_comparison.png"    # Output file path
 ```
+
+**Running the script:**
+```bash
+python experiments/gaussian_comparison.py
+```
+
+This will:
+*   Run the comparison for dimensions [2, 5, 10, 20, 50, 100]
+*   Print summary tables to the console showing:
+    - Effective Sample Size (ESS) for each dimension
+    - Acceptance rates for both samplers
+    - Time taken per sample
+*   Save comparison plots to `dimension_comparison.png` in the `codes` directory
 
 **Examples:**
 
-*   **Compare in higher dimensions:**
+*   **Test specific dimensions:**
     ```bash
-    python experiments/integrator_comparison.py --dim 5
+    python experiments/gaussian_comparison.py --dimensions 2 5 10
     ```
 
-*   **Custom step sizes and more integration steps:**
+*   **Custom sample size and warmup:**
     ```bash
-    python experiments/integrator_comparison.py --step-sizes 0.01 0.05 0.1 --n-leapfrog 50
+    python experiments/gaussian_comparison.py --n-samples 2000 --n-warmup 500
     ```
+
+*   **Custom HMC parameters:**
+    ```bash
+    python experiments/gaussian_comparison.py --hmc-step-size 0.05 --hmc-leapfrog-steps 100
+    ```
+
+*   **Custom Metropolis scale:**
+    ```bash
+    python experiments/gaussian_comparison.py --metropolis-scale 0.2
+    ```
+
+Use `python experiments/gaussian_comparison.py --help` for all options.
 
 ## Available Distributions
 
@@ -198,4 +198,4 @@ Use `--save_plots` to save the visualizations to files.
 - The Banana distribution only works with `dim=2`
 - HMC requires target distributions with implemented gradient
 - For high dimensions, consider using HMC over Metropolis
-- Adjust `scale_proposal` for Metropolis or `step_size` for HMC if acceptance rate is too low/high 
+- Adjust `scale_proposal` for Metropolis or `step_size` for HMC if acceptance rate is too low/high

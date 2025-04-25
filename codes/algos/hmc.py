@@ -28,7 +28,8 @@ class HMCSampler:
         initial: Callable[[], np.ndarray],
         iterations: int = 10_000,
         L: int = 50,
-        step_size: float = 0.1
+        step_size: float = 0.1,
+        mass_matrix: np.ndarray = None
     ):
         """
         Initialize the HMC sampler.
@@ -40,6 +41,7 @@ class HMCSampler:
             iterations: Number of iterations to run
             L: Number of leapfrog steps
             step_size: Size of each leapfrog step
+            mass_matrix: Mass matrix M (if None, uses identity)
         """
         self.target = target
         self.initial = initial
@@ -51,72 +53,107 @@ class HMCSampler:
         # Check if target has required methods for HMC
         if not hasattr(target, 'grad_log_density'):
             raise ValueError("Target distribution must implement grad_log_density for HMC")
+            
+        # Initialize mass matrix
+        self._initialize_mass_matrix(mass_matrix)
         
+    def _initialize_mass_matrix(self, mass_matrix: np.ndarray = None):
+        """Initialize mass matrix and its inverse."""
+        if mass_matrix is None:
+            # Get dimension from initial sample
+            init_sample = self.initial()
+            dim = len(init_sample)
+            # For high dimensions, we might want to scale the mass matrix
+            self.M = np.eye(dim)
+            self.M_inv = np.eye(dim)
+        else:
+            self.M = mass_matrix
+            self.M_inv = np.linalg.inv(mass_matrix)
+    
+    def _compute_hamiltonian(self, theta: np.ndarray, r: np.ndarray) -> float:
+        """
+        Compute Hamiltonian H(θ,r) = U(θ) + K(r)
+        where U(θ) = -log p(θ) is potential energy
+        and K(r) = r^T M^(-1) r / 2 is kinetic energy
+        """
+        potential = -self.target.log_density(theta)  # U(θ) = -log p(θ)
+        kinetic = 0.5 * r.T @ self.M_inv @ r  # K(r) = r^T M^(-1) r / 2
+        return potential + kinetic
+    
     def _leapfrog(
         self,
-        q0: np.ndarray,
-        p0: np.ndarray
+        theta_0: np.ndarray,
+        r_0: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Leapfrog integrator for Hamiltonian dynamics.
+        Leapfrog integrator for Hamiltonian dynamics following the pseudocode.
         
         Args:
-            q0: Initial position
-            p0: Initial momentum
+            theta_0: Initial position
+            r_0: Initial momentum
             
         Returns:
             Final position and momentum after L steps
         """
-        q = q0.copy()
-        p = p0.copy()
+        theta = theta_0.copy()
+        r = r_0.copy()
         
-        # Half step for momentum
-        p += self.target.grad_log_density(q) * self.step_size / 2
+        # Initial half step for momentum
+        # Note: grad_log_density gives ∇log p(θ) which is -∇U(θ)
+        r = r + (self.step_size/2) * self.target.grad_log_density(theta)
         
+        # Full steps for position and momentum
         for _ in range(self.L):
-            # Full step for position
-            q += p * self.step_size
+            # Position update using current momentum
+            theta = theta + self.step_size * self.M_inv @ r
             
-            # Full step for momentum (except last step)
+            # Full momentum update if not at the end
             if _ < self.L - 1:
-                p += self.target.grad_log_density(q) * self.step_size
+                r = r + self.step_size * self.target.grad_log_density(theta)
         
         # Final half step for momentum
-        p += self.target.grad_log_density(q) * self.step_size / 2
+        r = r + (self.step_size/2) * self.target.grad_log_density(theta)
         
-        return q, p
+        return theta, r
     
     def run(self) -> List[np.ndarray]:
         """
-        Run the HMC algorithm and return samples.
-        References: https://www.tcbegley.com/blog/posts/mcmc-part-2
+        Run the HMC algorithm following the pseudocode exactly.
         
         Returns:
             List of samples from the target distribution
         """
         self.samples = [self.initial()]
+        accepted = 0
         
-        for _ in range(self.iterations):
-            q0 = self.samples[-1]
-            # Sample momentum from standard normal
-            p0 = np.random.standard_normal(size=q0.shape)
+        for t in range(self.iterations):
+            theta_t = self.samples[-1]
             
-            # Generate proposal using leapfrog integration
-            qL, pL = self._leapfrog(q0, p0)
+            # Sample momentum from N(0, M)
+            r_t = np.random.multivariate_normal(
+                mean=np.zeros_like(theta_t),
+                cov=self.M
+            )
             
-            # Calculate Hamiltonian at start and end
-            h0 = -self.target.log_density(q0) + (p0 * p0).sum() / 2
-            hL = -self.target.log_density(qL) + (pL * pL).sum() / 2
+            # Store initial state
+            theta_0, r_0 = theta_t, r_t
             
-            # Calculate acceptance ratio
-            log_accept_ratio = h0 - hL
+            # Run leapfrog integrator
+            theta_hat, r_hat = self._leapfrog(theta_0, r_0)
+            
+            # Metropolis-Hastings correction
+            current_h = self._compute_hamiltonian(theta_0, r_0)
+            proposed_h = self._compute_hamiltonian(theta_hat, r_hat)
+            log_accept_ratio = current_h - proposed_h
             
             # Accept or reject
-            if np.random.random() < np.exp(log_accept_ratio):
-                self.samples.append(qL)
+            if np.log(np.random.uniform(0, 1)) < log_accept_ratio:
+                self.samples.append(theta_hat)
+                accepted += 1
             else:
-                self.samples.append(q0)
+                self.samples.append(theta_t)
                 
+        print(f"HMC acceptance rate: {accepted/self.iterations:.2%}")
         return self.samples
     
     def get_samples(self) -> List[np.ndarray]:

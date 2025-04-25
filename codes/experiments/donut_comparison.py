@@ -66,13 +66,13 @@ def plot_samples_nd(samples: np.ndarray, target_dim: int, save_path: str = None)
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
         return axes
     else:
-        # For higher dimensions, plot pairwise projections of first 3 dimensions
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-        fig.suptitle(f"{target_dim}D Shell Distribution - First 3 Dimensions Projections")
+        # For higher dimensions, plot pairwise projections and radial distribution
+        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+        fig.suptitle(f"{target_dim}D Shell Distribution - First 3 Dimensions Projections and Radial Distribution")
         
         # Define which dimensions to plot
         dims = [(0,1), (1,2), (0,2)]
-        for ax, (i,j) in zip(axes, dims):
+        for ax, (i,j) in zip(axes[:3], dims):
             ax.scatter(samples[:, i], samples[:, j], c='blue', alpha=0.5, s=20)
             ax.set_xlabel(f'Dimension {i+1}')
             ax.set_ylabel(f'Dimension {j+1}')
@@ -82,6 +82,16 @@ def plot_samples_nd(samples: np.ndarray, target_dim: int, save_path: str = None)
             ax.set_xlim(-4, 4)
             ax.set_ylim(-4, 4)
             ax.grid(True)
+            
+        # Add radial distribution plot
+        radii = np.linalg.norm(samples, axis=1)
+        axes[3].hist(radii, bins=50, density=True)
+        axes[3].axvline(x=3.0, color='pink', linestyle='--', alpha=0.5, label='Target radius')
+        axes[3].set_xlabel('Radius')
+        axes[3].set_ylabel('Density')
+        axes[3].set_title('Radial Distribution')
+        axes[3].grid(True)
+        axes[3].legend()
             
         if save_path:
             plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -183,7 +193,11 @@ def run_and_plot_comparison(
     accept_rate_hmc = len(np.unique(samples_hmc, axis=0)) / len(samples_hmc)
     
     # Create plots
-    axes = plot_samples_nd(samples_hmc, dim)  # Get axes for appropriate dimension
+    if dim == 2:
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    else:
+        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+        fig.suptitle(f"{dim}D Shell Distribution - First 3 Dimensions Projections and Radial Distribution")
     
     # Plot settings
     titles = [
@@ -192,12 +206,33 @@ def run_and_plot_comparison(
         f"HMC\n# samples: {n_samples}\nAccept rate: {accept_rate_hmc:.2%}"
     ]
     
-    for ax, samples, title in zip(axes, [samples_small, samples_large, samples_hmc], titles):
+    for ax, samples, title in zip(axes[:3], [samples_small, samples_large, samples_hmc], titles):
         if dim == 2:
             # For 2D, plot contours
             plot_density_contours(ax, target)
             ax.scatter(samples[:, 0], samples[:, 1], c='blue', alpha=0.5, s=20)
+        else:
+            # For higher dimensions, plot first two dimensions
+            ax.scatter(samples[:, 0], samples[:, 1], c='blue', alpha=0.5, s=20)
+            ax.set_xlabel('Dimension 1')
+            ax.set_ylabel('Dimension 2')
+            circle = plt.Circle((0, 0), 3.0, fill=False, color='pink', alpha=0.5)
+            ax.add_artist(circle)
+            ax.set_xlim(-4, 4)
+            ax.set_ylim(-4, 4)
+            ax.grid(True)
         ax.set_title(title)
+    
+    if dim > 2:
+        # Add radial distribution plot for HMC samples
+        radii = np.linalg.norm(samples_hmc, axis=1)
+        axes[3].hist(radii, bins=50, density=True)
+        axes[3].axvline(x=3.0, color='pink', linestyle='--', alpha=0.5, label='Target radius')
+        axes[3].set_xlabel('Radius')
+        axes[3].set_ylabel('Density')
+        axes[3].set_title('Radial Distribution (HMC)')
+        axes[3].grid(True)
+        axes[3].legend()
     
     plt.tight_layout()
     if output_file:
