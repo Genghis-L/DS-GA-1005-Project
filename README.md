@@ -169,7 +169,7 @@ This script compares different numerical integrators for HMC: Euler, Modified Eu
 
 #### 4. High-Dimensional Gaussian Comparison (`experiments/gaussian_comparison.py`)
 
-This script compares the performance (Effective Sample Size, Acceptance Rate, Time) of Metropolis and HMC when sampling from a high-dimensional standard Gaussian distribution.
+This script compares the performance (Effective Sample Size, Acceptance Rate, Time) of Metropolis and HMC when sampling from a high-dimensional standard Gaussian distribution. It also generates trajectory plots comparing the mixing behavior of both samplers.
 
 **Default Parameters:**
 ```python
@@ -177,9 +177,9 @@ This script compares the performance (Effective Sample Size, Acceptance Rate, Ti
 --n-samples=1000                      # Number of samples per dimension
 --n-warmup=1000                       # Number of warmup samples
 --hmc-step-size=0.1                   # Step size for HMC
---hmc-leapfrog-steps=50               # Number of leapfrog steps for HMC
---metropolis-scale=0.1                # Scale for Metropolis proposal
---output="dimension_comparison.png"    # Output file path
+--hmc-leapfrog-steps=50              # Number of leapfrog steps for HMC
+--metropolis-scale=0.1               # Scale for Metropolis proposal
+--output="gaussian_comparison"        # Output file prefix
 ```
 
 **Running the script:**
@@ -189,11 +189,25 @@ python experiments/gaussian_comparison.py
 
 This will:
 *   Run the comparison for dimensions [2, 5, 10, 20, 50, 100]
+*   Generate three types of plots:
+    1. Short trajectory plots (first 200 iterations) for 2D and 100D cases
+    2. Long trajectory plots (first 1000 iterations) for 2D and 100D cases
+    3. Performance metric plots comparing:
+       - Effective Sample Size (ESS) vs dimension
+       - Computation time vs dimension
+       - Acceptance rate vs dimension
+       - ESS per second vs dimension
 *   Print summary tables to the console showing:
-    - Effective Sample Size (ESS) for each dimension
+    - ESS for each dimension
     - Acceptance rates for both samplers
     - Time taken per sample
-*   Save comparison plots to `dimension_comparison.png` in the `codes` directory
+
+The trajectory plots show:
+- Left panel: Random-walk Metropolis trajectory
+- Right panel: HMC trajectory
+- First coordinate's position over iterations
+- Black dots for sample points
+- Matching y-axis limits for fair comparison
 
 **Examples:**
 
@@ -217,9 +231,62 @@ This will:
     python experiments/gaussian_comparison.py --metropolis-scale 0.2
     ```
 
+*   **Custom output prefix:**
+    ```bash
+    python experiments/gaussian_comparison.py --output "my_gaussian_comparison"
+    ```
+    This will generate:
+    - `my_gaussian_comparison_trajectory_short.png`
+    - `my_gaussian_comparison_trajectory_long.png`
+    - `my_gaussian_comparison_metrics.png`
+
 Use `python experiments/gaussian_comparison.py --help` for all options.
 
+#### 5. Hamiltonian Dynamics Visualization (`experiments/integrator_trajectory.py`)
 
+This script visualizes how different numerical integrators (Euler, Modified Euler, and Leapfrog) approximate Hamiltonian dynamics for a simple harmonic oscillator system. It recreates the phase space trajectories similar to those shown in Neal's HMC paper.
+
+**Default Parameters:**
+```python
+--step-size=0.3           # Base step size for integration
+--n-steps=20              # Number of integration steps
+--q0=0.0                  # Initial position
+--p0=1.0                  # Initial momentum
+--output="integrator_trajectories.png"  # Output file path
+```
+
+The script generates a 2x2 grid of plots showing:
+1. Euler's method with stepsize 0.3
+2. Modified Euler's method with stepsize 0.3
+3. Leapfrog method with stepsize 0.3
+4. Leapfrog method with stepsize 1.2
+
+Each plot shows:
+- The true trajectory (gray circle)
+- The numerical approximation (black dots and lines)
+- Position (q) vs Momentum (p) in phase space
+
+**Examples:**
+
+*   **Default visualization:**
+    ```bash
+    python experiments/integrator_trajectory.py
+    ```
+
+*   **Custom step size and initial conditions:**
+    ```bash
+    python experiments/integrator_trajectory.py --step-size 0.2 --q0 0.5 --p0 0.5
+    ```
+
+*   **More integration steps:**
+    ```bash
+    python experiments/integrator_trajectory.py --n-steps 50
+    ```
+
+The visualization demonstrates key properties of each integrator:
+- Euler's method: Energy tends to increase (spiral outward)
+- Modified Euler's method: Better energy conservation
+- Leapfrog method: Excellent energy conservation even with larger step sizes
 
 ## Available Distributions
 

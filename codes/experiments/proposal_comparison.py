@@ -33,7 +33,10 @@ class UniformProposal:
 
 def compute_ess(samples: np.ndarray) -> float:
     """Compute Effective Sample Size using autocorrelation."""
+    # Ensure samples is a 1D array
+    samples = np.asarray(samples).flatten()
     n = len(samples)
+    
     if n <= 1:
         return 0.0
         
@@ -42,12 +45,19 @@ def compute_ess(samples: np.ndarray) -> float:
     mean = np.mean(samples)
     var = np.var(samples)
     
-    if var == 0:
+    if var == 0 or not np.isfinite(var):
         return 0.0
         
     acf = np.zeros(max_lag)
     for lag in range(max_lag):
-        acf[lag] = np.mean(((samples[:-lag] - mean) * (samples[lag:] - mean))) / var
+        # Ensure proper array shapes and handle edge cases
+        if lag >= n:
+            break
+        c0 = samples[:-lag] - mean if lag > 0 else samples - mean
+        c1 = samples[lag:] - mean
+        if len(c0) == 0 or len(c1) == 0:
+            break
+        acf[lag] = np.mean(c0 * c1) / var
         
     # Find where autocorrelation drops below 0.05 or becomes negative
     cutoff = np.where((acf < 0.05) | (acf < 0))[0]
@@ -100,7 +110,18 @@ def run_comparison(
             # Compute metrics
             accept_rate = len(np.unique(samples, axis=0)) / len(samples)
             time_per_sample = (end_time - start_time) / n_samples
-            ess = np.mean([compute_ess(samples[:, i]) for i in range(dim)])
+            
+            # Compute ESS for each dimension and take the mean
+            ess_values = []
+            for i in range(dim):
+                try:
+                    ess_i = compute_ess(samples[:, i])
+                    if np.isfinite(ess_i):
+                        ess_values.append(ess_i)
+                except:
+                    continue
+            
+            ess = np.mean(ess_values) if ess_values else 0.0
             
             results.append({
                 'proposal': prop_type,
@@ -108,14 +129,14 @@ def run_comparison(
                 'accept_rate': accept_rate,
                 'time_per_sample': time_per_sample,
                 'ess': ess,
-                'ess_per_second': ess / (end_time - start_time)
+                'ess_per_second': ess / (end_time - start_time) if ess > 0 else 0.0
             })
             
             print(f"\nResults for {prop_type.upper()} proposal (scale={scale}):")
             print(f"  Acceptance rate: {accept_rate:.2%}")
             print(f"  Time per sample: {time_per_sample*1e6:.2f} μs")
             print(f"  ESS: {ess:.1f}")
-            print(f"  ESS/s: {ess/(end_time - start_time):.1f}")
+            print(f"  ESS/s: {ess/(end_time - start_time) if ess > 0 else 0.0:.1f}")
     
     # Plot results
     fig, axes = plt.subplots(2, 2, figsize=(15, 12))

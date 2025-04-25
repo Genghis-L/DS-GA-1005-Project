@@ -1,209 +1,272 @@
+import os
+import sys
+import time
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import List, Tuple, Dict
-from tqdm import tqdm
+from typing import List, Dict, Any
+
+# Add parent directory to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from algos.metropolis import MetropolisSampler, NormalProposal
 from algos.hmc import HMCSampler
-from dists import NormalDistribution
-import time
+from dists.normal import NormalDistribution
 
-def effective_sample_size(samples: np.ndarray) -> float:
-    """
-    Compute effective sample size using autocorrelation.
-    """
+def compute_ess(samples: np.ndarray) -> float:
+    """Compute Effective Sample Size using autocorrelation."""
     n = len(samples)
     if n <= 1:
         return 0.0
         
     # Compute autocorrelation up to lag 50 or n//3, whichever is smaller
-    max_lag = min(50, n // 3)
+    max_lag = min(50, n//3)
     mean = np.mean(samples)
     var = np.var(samples)
     
-    if var == 0:
+    if var == 0 or not np.isfinite(var):
         return 0.0
         
-    autocorr = np.correlate(samples - mean, samples - mean, mode='full')[n-1:n+max_lag]
-    autocorr = autocorr / (n * var)
-    
-    # Find where autocorrelation drops below 0.05 or starts increasing
-    cutoff = max_lag
-    for i in range(1, max_lag):
-        if autocorr[i] < 0.05 or autocorr[i] > autocorr[i-1]:
-            cutoff = i
+    acf = np.zeros(max_lag)
+    for lag in range(max_lag):
+        if lag >= n:
             break
-            
-    tau = 1 + 2 * np.sum(autocorr[1:cutoff])
-    ess = n / tau
-    return max(1, ess)  # Ensure ESS is at least 1
-
-def run_dimension_experiment(
-    dims: List[int],
-    n_samples: int = 10000,
-    n_runs: int = 5
-) -> Dict:
-    """
-    Compare Metropolis and HMC performance across dimensions.
-    
-    Args:
-        dims: List of dimensions to test
-        n_samples: Number of samples per run
-        n_runs: Number of runs per dimension (for variance estimation)
+        c0 = samples[:-lag] - mean if lag > 0 else samples - mean
+        c1 = samples[lag:] - mean
+        if len(c0) == 0 or len(c1) == 0:
+            break
+        acf[lag] = np.mean(c0 * c1) / var
         
-    Returns:
-        Dictionary containing performance metrics
-    """
-    results = {
-        'metropolis': {
-            'ess': [], 'ess_std': [], 'time': [], 'accept_rate': []
-        },
-        'hmc': {
-            'ess': [], 'ess_std': [], 'time': [], 'accept_rate': []
-        }
-    }
+    # Find where autocorrelation drops below 0.05 or becomes negative
+    cutoff = np.where((acf < 0.05) | (acf < 0))[0]
+    if len(cutoff) > 0:
+        max_lag = cutoff[0]
+        
+    # Compute ESS
+    ess = n / (1 + 2 * np.sum(acf[:max_lag]))
+    return max(1.0, ess)
+
+def plot_trajectories(
+    metropolis_samples: np.ndarray,
+    hmc_samples: np.ndarray,
+    output_prefix: str,
+    dim: int,
+    short_run: bool = True
+):
+    """Plot trajectory comparison between Metropolis and HMC."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
     
-    for dim in tqdm(dims, desc="Testing dimensions"):
+    # Get the first coordinate trajectory
+    metro_traj = metropolis_samples[:, 0]
+    hmc_traj = hmc_samples[:, 0]
+    
+    # For short run (first 200 iterations)
+    if short_run:
+        n_samples = 200
+        title = "First 200 iterations"
+    else:
+        n_samples = 1000
+        title = f"First {n_samples} iterations"
+    
+    # Plot Metropolis trajectory
+    ax1.plot(range(n_samples), metro_traj[:n_samples], 'k.', markersize=2)
+    ax1.set_title("Random-walk Metropolis")
+    ax1.set_xlabel("Iteration")
+    ax1.set_ylabel("First position coordinate")
+    ax1.grid(True)
+    
+    # Plot HMC trajectory
+    ax2.plot(range(n_samples), hmc_traj[:n_samples], 'k.', markersize=2)
+    ax2.set_title("Hamiltonian Monte Carlo")
+    ax2.set_xlabel("Iteration")
+    ax2.set_ylabel("First position coordinate")
+    ax2.grid(True)
+    
+    # Set y-limits to be the same for both plots
+    ymin = min(metro_traj[:n_samples].min(), hmc_traj[:n_samples].min())
+    ymax = max(metro_traj[:n_samples].max(), hmc_traj[:n_samples].max())
+    margin = 0.1 * (ymax - ymin)
+    ax1.set_ylim(ymin - margin, ymax + margin)
+    ax2.set_ylim(ymin - margin, ymax + margin)
+    
+    plt.suptitle(title)
+    plt.tight_layout()
+    
+    # Save plot
+    suffix = "short" if short_run else "long"
+    plt.savefig(f"{output_prefix}_trajectory_{suffix}_{dim}d.png", dpi=300, bbox_inches='tight')
+    plt.close()
+
+def run_comparison(
+    dimensions: List[int],
+    n_samples: int,
+    n_warmup: int,
+    hmc_step_size: float,
+    hmc_leapfrog_steps: int,
+    metropolis_scale: float,
+    output_prefix: str
+) -> List[Dict[str, Any]]:
+    """Run comparison between Metropolis and HMC samplers."""
+    results = []
+    
+    for dim in dimensions:
+        print(f"\nRunning comparison for {dim} dimensions...")
+        
         # Setup target distribution (standard normal)
-        target = NormalDistribution(
-            mean=np.zeros(dim),
-            cov=np.eye(dim)
-        )
+        target = NormalDistribution(mean=np.zeros(dim), cov=np.eye(dim))
         initial = lambda: np.zeros(dim)
         
-        # Storage for this dimension
-        dim_results = {
-            'metropolis': {'ess': [], 'time': [], 'accept': []},
-            'hmc': {'ess': [], 'time': [], 'accept': []}
+        # Run Metropolis sampler
+        start_time = time.time()
+        metropolis = MetropolisSampler(
+            target=target,
+            initial=initial,
+            proposal=NormalProposal(metropolis_scale),
+            iterations=n_samples + n_warmup
+        )
+        metropolis_samples = np.array(metropolis.run())
+        metro_time = time.time() - start_time
+        
+        # Run HMC sampler
+        start_time = time.time()
+        hmc = HMCSampler(
+            target=target,
+            initial=initial,
+            step_size=hmc_step_size,
+            L=hmc_leapfrog_steps,
+            iterations=n_samples + n_warmup
+        )
+        hmc_samples = np.array(hmc.run())
+        hmc_time = time.time() - start_time
+        
+        # Remove warmup samples
+        metropolis_samples = metropolis_samples[n_warmup:]
+        hmc_samples = hmc_samples[n_warmup:]
+        
+        # Generate trajectory plots for 2D and 100D cases
+        if dim in [2, 100]:
+            plot_trajectories(metropolis_samples, hmc_samples, output_prefix, dim, short_run=True)
+            plot_trajectories(metropolis_samples, hmc_samples, output_prefix, dim, short_run=False)
+        
+        # Compute metrics
+        result = {
+            'dimension': dim,
+            'metropolis': {
+                'ess': np.mean([compute_ess(metropolis_samples[:, i]) for i in range(dim)]),
+                'time': metro_time,
+                'accept_rate': len(np.unique(metropolis_samples, axis=0)) / len(metropolis_samples)
+            },
+            'hmc': {
+                'ess': np.mean([compute_ess(hmc_samples[:, i]) for i in range(dim)]),
+                'time': hmc_time,
+                'accept_rate': len(np.unique(hmc_samples, axis=0)) / len(hmc_samples)
+            }
         }
         
-        for _ in range(n_runs):
-            # Run Metropolis
-            start_time = time.time()
-            metropolis = MetropolisSampler(
-                target=target,
-                initial=initial,
-                proposal=NormalProposal(scale=2.4/np.sqrt(dim)),  # Optimal scaling
-                iterations=n_samples
-            )
-            samples_m = np.array(metropolis.run())
-            time_m = time.time() - start_time
-            
-            # Compute metrics for each dimension
-            ess_m = np.mean([
-                effective_sample_size(samples_m[:, i])
-                for i in range(dim)
-            ])
-            accept_m = len(np.unique(samples_m, axis=0)) / len(samples_m)
-            
-            # Run HMC
-            start_time = time.time()
-            hmc = HMCSampler(
-                target=target,
-                initial=initial,
-                iterations=n_samples,
-                step_size=0.1/np.sqrt(dim),  # Scale with dimension
-                L=int(np.pi/2 * np.sqrt(dim))  # Scale with dimension
-            )
-            samples_h = np.array(hmc.run())
-            time_h = time.time() - start_time
-            
-            # Compute metrics
-            ess_h = np.mean([
-                effective_sample_size(samples_h[:, i])
-                for i in range(dim)
-            ])
-            accept_h = len(np.unique(samples_h, axis=0)) / len(samples_h)
-            
-            # Store results
-            dim_results['metropolis']['ess'].append(ess_m)
-            dim_results['metropolis']['time'].append(time_m)
-            dim_results['metropolis']['accept'].append(accept_m)
-            
-            dim_results['hmc']['ess'].append(ess_h)
-            dim_results['hmc']['time'].append(time_h)
-            dim_results['hmc']['accept'].append(accept_h)
+        results.append(result)
         
-        # Compute statistics across runs
-        for sampler in ['metropolis', 'hmc']:
-            results[sampler]['ess'].append(np.mean(dim_results[sampler]['ess']))
-            results[sampler]['ess_std'].append(np.std(dim_results[sampler]['ess']))
-            results[sampler]['time'].append(np.mean(dim_results[sampler]['time']))
-            results[sampler]['accept_rate'].append(np.mean(dim_results[sampler]['accept']))
+        # Print results
+        print(f"\nResults for {dim} dimensions:")
+        print("Metropolis:")
+        print(f"  ESS: {result['metropolis']['ess']:.1f}")
+        print(f"  Time: {result['metropolis']['time']:.2f}s")
+        print(f"  Accept Rate: {result['metropolis']['accept_rate']:.2%}")
+        print("HMC:")
+        print(f"  ESS: {result['hmc']['ess']:.1f}")
+        print(f"  Time: {result['hmc']['time']:.2f}s")
+        print(f"  Accept Rate: {result['hmc']['accept_rate']:.2%}")
     
     return results
 
-def plot_results(dims: List[int], results: Dict):
-    """Plot comparison results."""
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle('Metropolis vs HMC Performance Comparison')
+def plot_comparison_metrics(results: List[Dict[str, Any]], output_prefix: str):
+    """Plot comparison metrics across dimensions."""
+    dimensions = [r['dimension'] for r in results]
     
-    # ESS plot
-    ax = axes[0, 0]
-    ax.errorbar(dims, results['metropolis']['ess'], 
-                yerr=results['metropolis']['ess_std'],
-                label='Metropolis', marker='o')
-    ax.errorbar(dims, results['hmc']['ess'], 
-                yerr=results['hmc']['ess_std'],
-                label='HMC', marker='s')
-    ax.set_xlabel('Dimension')
-    ax.set_ylabel('Effective Sample Size')
-    ax.set_yscale('log')
-    ax.legend()
-    ax.grid(True)
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    fig.suptitle("Metropolis vs HMC Comparison")
+    
+    # ESS
+    axes[0,0].plot(dimensions, [r['metropolis']['ess'] for r in results], 'o-', label='Metropolis')
+    axes[0,0].plot(dimensions, [r['hmc']['ess'] for r in results], 's-', label='HMC')
+    axes[0,0].set_xlabel('Dimension')
+    axes[0,0].set_ylabel('ESS')
+    axes[0,0].set_title('Effective Sample Size vs Dimension')
+    axes[0,0].set_xscale('log')
+    axes[0,0].set_yscale('log')
+    axes[0,0].grid(True)
+    axes[0,0].legend()
+    
+    # Time
+    axes[0,1].plot(dimensions, [r['metropolis']['time'] for r in results], 'o-', label='Metropolis')
+    axes[0,1].plot(dimensions, [r['hmc']['time'] for r in results], 's-', label='HMC')
+    axes[0,1].set_xlabel('Dimension')
+    axes[0,1].set_ylabel('Time (s)')
+    axes[0,1].set_title('Computation Time vs Dimension')
+    axes[0,1].set_xscale('log')
+    axes[0,1].set_yscale('log')
+    axes[0,1].grid(True)
+    axes[0,1].legend()
+    
+    # Acceptance Rate
+    axes[1,0].plot(dimensions, [r['metropolis']['accept_rate'] for r in results], 'o-', label='Metropolis')
+    axes[1,0].plot(dimensions, [r['hmc']['accept_rate'] for r in results], 's-', label='HMC')
+    axes[1,0].set_xlabel('Dimension')
+    axes[1,0].set_ylabel('Acceptance Rate')
+    axes[1,0].set_title('Acceptance Rate vs Dimension')
+    axes[1,0].set_xscale('log')
+    axes[1,0].grid(True)
+    axes[1,0].legend()
     
     # ESS per second
-    ax = axes[0, 1]
-    ess_per_sec_m = np.array(results['metropolis']['ess']) / np.array(results['metropolis']['time'])
-    ess_per_sec_h = np.array(results['hmc']['ess']) / np.array(results['hmc']['time'])
-    ax.plot(dims, ess_per_sec_m, 'o-', label='Metropolis')
-    ax.plot(dims, ess_per_sec_h, 's-', label='HMC')
-    ax.set_xlabel('Dimension')
-    ax.set_ylabel('ESS per Second')
-    ax.set_yscale('log')
-    ax.legend()
-    ax.grid(True)
-    
-    # Acceptance rate
-    ax = axes[1, 0]
-    ax.plot(dims, results['metropolis']['accept_rate'], 'o-', label='Metropolis')
-    ax.plot(dims, results['hmc']['accept_rate'], 's-', label='HMC')
-    ax.set_xlabel('Dimension')
-    ax.set_ylabel('Acceptance Rate')
-    ax.legend()
-    ax.grid(True)
-    
-    # Computation time
-    ax = axes[1, 1]
-    ax.plot(dims, results['metropolis']['time'], 'o-', label='Metropolis')
-    ax.plot(dims, results['hmc']['time'], 's-', label='HMC')
-    ax.set_xlabel('Dimension')
-    ax.set_ylabel('Time (seconds)')
-    ax.legend()
-    ax.grid(True)
+    axes[1,1].plot(dimensions, 
+                   [r['metropolis']['ess']/r['metropolis']['time'] for r in results], 
+                   'o-', label='Metropolis')
+    axes[1,1].plot(dimensions, 
+                   [r['hmc']['ess']/r['hmc']['time'] for r in results], 
+                   's-', label='HMC')
+    axes[1,1].set_xlabel('Dimension')
+    axes[1,1].set_ylabel('ESS/s')
+    axes[1,1].set_title('ESS per Second vs Dimension')
+    axes[1,1].set_xscale('log')
+    axes[1,1].set_yscale('log')
+    axes[1,1].grid(True)
+    axes[1,1].legend()
     
     plt.tight_layout()
-    plt.savefig('dimension_comparison.png')
+    plt.savefig(f"{output_prefix}_metrics.png", dpi=300, bbox_inches='tight')
     plt.close()
 
 def main():
-    # Test dimensions from 2 to 100
-    dims = [2, 5, 10, 20, 50, 100]
-    results = run_dimension_experiment(dims)
-    plot_results(dims, results)
+    parser = argparse.ArgumentParser(description="Compare Metropolis and HMC samplers")
+    parser.add_argument("--dimensions", type=int, nargs='+',
+                       default=[2, 5, 10, 20, 50, 100],
+                       help="Dimensions to test (default: 2 5 10 20 50 100)")
+    parser.add_argument("--n-samples", type=int, default=1000,
+                       help="Number of samples per dimension (default: 1000)")
+    parser.add_argument("--n-warmup", type=int, default=1000,
+                       help="Number of warmup samples (default: 1000)")
+    parser.add_argument("--hmc-step-size", type=float, default=0.1,
+                       help="Step size for HMC (default: 0.1)")
+    parser.add_argument("--hmc-leapfrog-steps", type=int, default=50,
+                       help="Number of leapfrog steps for HMC (default: 50)")
+    parser.add_argument("--metropolis-scale", type=float, default=0.1,
+                       help="Scale for Metropolis proposal (default: 0.1)")
+    parser.add_argument("--output", type=str, default="gaussian_comparison",
+                       help="Output file prefix (default: gaussian_comparison)")
     
-    # Print summary
-    print("\nSummary of results:")
-    print("\nEffective Sample Size (higher is better):")
-    print("Dimension | Metropolis |    HMC")
-    print("-" * 40)
-    for i, d in enumerate(dims):
-        print(f"{d:9d} | {results['metropolis']['ess'][i]:9.1f} | {results['hmc']['ess'][i]:9.1f}")
+    args = parser.parse_args()
     
-    print("\nAcceptance Rate:")
-    print("Dimension | Metropolis |    HMC")
-    print("-" * 40)
-    for i, d in enumerate(dims):
-        print(f"{d:9d} | {results['metropolis']['accept_rate'][i]:9.3f} | {results['hmc']['accept_rate'][i]:9.3f}")
+    results = run_comparison(
+        dimensions=args.dimensions,
+        n_samples=args.n_samples,
+        n_warmup=args.n_warmup,
+        hmc_step_size=args.hmc_step_size,
+        hmc_leapfrog_steps=args.hmc_leapfrog_steps,
+        metropolis_scale=args.metropolis_scale,
+        output_prefix=args.output
+    )
+    
+    plot_comparison_metrics(results, args.output)
 
 if __name__ == "__main__":
     main() 
