@@ -21,7 +21,6 @@ class TargetDistribution:
 
 class HMCSampler:
     """Hamiltonian Monte Carlo sampler."""
-    
     def __init__(
         self,
         target: TargetDistribution,
