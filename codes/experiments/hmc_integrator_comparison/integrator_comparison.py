@@ -4,6 +4,7 @@ import time
 import argparse
 import numpy as np
 import matplotlib.pyplot as plt
+from typing import Callable, List, Any, Optional
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,9 +24,12 @@ class HMCWithIntegrator(HMCSampler):
         iterations: int = 10_000,
         L: int = 50,
         step_size: float = 0.1,
-        mass_matrix: np.ndarray = None
+        mass_matrix: np.ndarray = None,
+        kinetic_energy: str = "gaussian",
+        kinetic_params: Optional[dict] = None,
+        use_metropolis: bool = True
     ):
-        super().__init__(target, initial, iterations, L, step_size, mass_matrix)
+        super().__init__(target, initial, iterations, L, step_size, mass_matrix, kinetic_energy, kinetic_params, use_metropolis)
         self.integrator = integrator
         self.acceptance_rate = 0.0  # Initialize acceptance rate
         
@@ -105,37 +109,40 @@ class HMCWithIntegrator(HMCSampler):
         self.samples = [self.initial()]
         accepted = 0
         
-        for t in range(self.iterations):
+        for _ in range(self.iterations):
             theta_t = self.samples[-1]
             
-            # Sample momentum from N(0, M)
-            r_t = np.random.multivariate_normal(
-                mean=np.zeros_like(theta_t),
-                cov=self.M
-            )
+            # Sample momentum from the chosen distribution
+            r_t = self._sample_momentum(len(theta_t))
             
             # Store initial state
             theta_0, r_0 = theta_t, r_t
             
-            # Run integrator
+            # Run leapfrog integrator
             theta_hat, r_hat = self._integrate(theta_0, r_0)
             
-            # Metropolis-Hastings correction
-            current_h = self._compute_hamiltonian(theta_0, r_0)
-            proposed_h = self._compute_hamiltonian(theta_hat, r_hat)
-            log_accept_ratio = current_h - proposed_h
-            
-            # Accept or reject
-            if np.log(np.random.uniform(0, 1)) < log_accept_ratio:
+            if self.use_metropolis:
+                # Metropolis-Hastings correction
+                current_h = self._compute_hamiltonian(theta_0, r_0)
+                proposed_h = self._compute_hamiltonian(theta_hat, r_hat)
+                log_accept_ratio = current_h - proposed_h
+                
+                # Accept or reject
+                if np.log(np.random.uniform(0, 1)) < log_accept_ratio:
+                    self.samples.append(theta_hat)
+                    accepted += 1
+                else:
+                    self.samples.append(theta_t)
+            else:
+                # Always accept the proposal without Metropolis correction
                 self.samples.append(theta_hat)
                 accepted += 1
-            else:
-                self.samples.append(theta_t)
         
         # Store acceptance rate
         self.acceptance_rate = accepted / self.iterations
-        print(f"HMC acceptance rate ({self.integrator}): {self.acceptance_rate:.2%}")
+        print(f"HMC acceptance rate: {self.acceptance_rate:.2%}")
         return self.samples
+    
 
 def compute_energy_error(sampler: HMCWithIntegrator, n_test: int = 100) -> float:
     """Compute average relative energy error for the integrator."""
