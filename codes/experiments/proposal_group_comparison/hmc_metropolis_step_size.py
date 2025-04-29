@@ -74,7 +74,7 @@ def donut_distribution(dim, radius=3.0, sigma2=0.05):
 
 def run_experiment(target_class, dim=100, n_samples=1000, n_warmup=100, L=50):
     # Step sizes
-    step_sizes_no_metro = [0.0001, 0.0003, 0.001, 0.003, 0.01, 0.03, 0.1, 0.2]
+    step_sizes_no_metro = [0.002, 0.005, 0.01, 0.025, 0.04, 0.055, 0.07, 0.085, 0.1, 0.2]
     step_size_metro = 0.1
     # Results
     results = {
@@ -148,60 +148,71 @@ def compute_ess(samples: np.ndarray) -> float:
     ess = n / (1 + 2 * np.sum(acf[:max_lag]))
     return max(1.0, ess)
 
-def plot_experiment(results: Dict, target_name: str, save_prefix: str, sample_size: int):
+def plot_experiment_single(results: Dict, target_name: str, sample_size: int, save_path: str):
     step_sizes = results['step_sizes']
     step_size_metro = 0.1
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    L = 50
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle(
-        f"Target Distribution: {target_name} 100d comparison\n"
+        f"HMC Step Size Comparison (100d) - {target_name}\n"
         f"Number of points to sample: {sample_size}\n"
-        f"HMC with Metropolis step size (epsilon): {step_size_metro}, L: 50\n"
+        f"HMC with Metropolis step size (epsilon): {step_size_metro}, L: {L}, with leapfrog integrator\n"
         f"HMC w/o Metropolis step sizes: {step_sizes}"
     )
+    fig.subplots_adjust(top=0.90)
 
-    fig.subplots_adjust(top=0.85)
     # ESS
-    axes[0].plot(step_sizes, results['ess_no_metro'], marker='o', label='HMC w/o Metropolis')
-    axes[0].hlines(results['ess_metro'], step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
-    axes[0].set_xlabel('Step size')
-    axes[0].set_ylabel('ESS')
-    axes[0].set_title('Effective Sample Size')
-    axes[0].set_xscale('log')
-    axes[0].legend()
-    axes[0].grid(True)
-    # Time
-    axes[1].plot(step_sizes, results['time_no_metro'], marker='o', label='HMC w/o Metropolis')
-    axes[1].hlines(results['time_metro'], step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
-    axes[1].set_xlabel('Step size')
-    axes[1].set_ylabel('Computation Time (s)')
-    axes[1].set_title('Computation Time')
-    axes[1].set_xscale('log')
-    axes[1].legend()
-    axes[1].grid(True)
+    axes[0, 0].plot(step_sizes, results['ess_no_metro'], marker='o', label='HMC w/o Metropolis')
+    axes[0, 0].hlines(results['ess_metro'], step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
+    axes[0, 0].set_xlabel('Step size')
+    axes[0, 0].set_ylabel('ESS')
+    axes[0, 0].set_title('ESS')
+    axes[0, 0].set_xscale('log')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True)
     # Energy Error
-    axes[2].plot(step_sizes, results['energy_no_metro'], marker='o', label='HMC w/o Metropolis')
-    axes[2].hlines(results['energy_metro'], step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
-    axes[2].set_xlabel('Step size')
-    axes[2].set_ylabel('Energy Error')
-    axes[2].set_title('Energy Error')
-    axes[2].set_xscale('log')
-    axes[2].legend()
-    axes[2].grid(True)
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.savefig(f"{save_prefix}_step_size_comparison.png", dpi=300, bbox_inches='tight')
+    axes[0, 1].plot(step_sizes, results['energy_no_metro'], marker='o', label='HMC w/o Metropolis')
+    axes[0, 1].hlines(results['energy_metro'], step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
+    axes[0, 1].set_xlabel('Step size')
+    axes[0, 1].set_ylabel('Energy Error')
+    axes[0, 1].set_title('Energy Error')
+    axes[0, 1].set_xscale('log')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True)
+    # Computation Time
+    axes[1, 0].plot(step_sizes, results['time_no_metro'], marker='o', label='HMC w/o Metropolis')
+    axes[1, 0].hlines(results['time_metro'], step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
+    axes[1, 0].set_xlabel('Step size')
+    axes[1, 0].set_ylabel('Computation Time (s)')
+    axes[1, 0].set_title('Computation Time')
+    axes[1, 0].set_xscale('log')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True)
+    # Time per Sample
+    axes[1, 1].plot(step_sizes, np.array(results['time_no_metro'])/sample_size, marker='o', label='HMC w/o Metropolis')
+    axes[1, 1].hlines(results['time_metro']/sample_size, step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
+    axes[1, 1].set_xlabel('Step size')
+    axes[1, 1].set_ylabel('Time per Sample (s)')
+    axes[1, 1].set_title('Time per Sample')
+    axes[1, 1].set_xscale('log')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.93])
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 
 def main():
-    dim = 100
+    dim = 500
     n_samples = 1000
     n_warmup = 100
     L = 50
     # Standard Gaussian
     results_gauss = run_experiment(standard_gaussian, dim, n_samples, n_warmup, L)
-    plot_experiment(results_gauss, 'Standard Gaussian', 'standard_gaussian', n_samples)
+    plot_experiment_single(results_gauss, 'Standard Gaussian', n_samples, 'hmc_step_size_comparison_gaussian.png')
     # Donut
     results_donut = run_experiment(lambda d: donut_distribution(d, radius=3.0, sigma2=0.05), dim, n_samples, n_warmup, L)
-    plot_experiment(results_donut, 'Donut Distribution', 'donut', n_samples)
+    plot_experiment_single(results_donut, 'Donut Distribution', n_samples, 'hmc_step_size_comparison_donut.png')
 
 if __name__ == "__main__":
     main()

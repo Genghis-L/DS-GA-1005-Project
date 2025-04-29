@@ -442,3 +442,17 @@ def compute_energy_error(sampler: HMCWithIntegrator, n_test: int = 100) -> float
         theta = theta_new
         
     return np.mean(errors)
+
+def compute_relative_energy_error(sampler: HMCWithIntegrator, n_test: int = 100) -> float:
+    """Compute mean relative energy error for the sampler over n_test trajectories."""
+    errors = []
+    theta = sampler.initial()
+    for _ in range(n_test):
+        r = np.random.multivariate_normal(mean=np.zeros_like(theta), cov=sampler.M)
+        initial_energy = sampler._compute_hamiltonian(theta, r)
+        theta_new, r_new = sampler._integrate(theta, r)
+        final_energy = sampler._compute_hamiltonian(theta_new, r_new)
+        rel_error = abs(final_energy - initial_energy) / (abs(initial_energy) + 1e-12)
+        errors.append(rel_error)
+        theta = theta_new
+    return np.mean(errors)
