@@ -36,7 +36,7 @@ import os
 
 # Add the parent directory to the path to import from algos
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from algos import HMCWithIntegrator, compute_energy_error
+from algos import HMCWithIntegrator, compute_energy_error, compute_relative_energy_error
 
 
 # Standard Gaussian target
@@ -83,8 +83,8 @@ def run_experiment(target_class, dim=100, n_samples=1000, n_warmup=100, L=50):
         'ess_metro': None,
         'time_no_metro': [],
         'time_metro': None,
-        'energy_no_metro': [],
-        'energy_metro': None
+        'relative_energy_no_metro': [],
+        'relative_energy_metro': None
     }
     # HMC with Metropolis (fixed step size)
     target = target_class(dim)
@@ -103,7 +103,8 @@ def run_experiment(target_class, dim=100, n_samples=1000, n_warmup=100, L=50):
     end = time.time()
     results['ess_metro'] = np.mean([compute_ess(samples_metro[:, i]) for i in range(dim)])
     results['time_metro'] = end - start
-    results['energy_metro'] = compute_energy_error(sampler_metro)
+    # results['energy_metro'] = compute_energy_error(sampler_metro)
+    results['relative_energy_metro'] = compute_relative_energy_error(sampler_metro)
     # HMC without Metropolis (varying step size)
     for step_size in step_sizes_no_metro:
         sampler_no_metro = HMCWithIntegrator(
@@ -121,7 +122,8 @@ def run_experiment(target_class, dim=100, n_samples=1000, n_warmup=100, L=50):
         ess = np.mean([compute_ess(samples_no_metro[:, i]) for i in range(dim)])
         results['ess_no_metro'].append(ess)
         results['time_no_metro'].append(end - start)
-        results['energy_no_metro'].append(compute_energy_error(sampler_no_metro))
+        # results['energy_no_metro'].append(compute_energy_error(sampler_no_metro))
+        results['relative_energy_no_metro'].append(compute_relative_energy_error(sampler_no_metro))
     return results
 
 def compute_ess(samples: np.ndarray) -> float:
@@ -171,11 +173,11 @@ def plot_experiment_single(results: Dict, target_name: str, sample_size: int, sa
     axes[0, 0].legend()
     axes[0, 0].grid(True)
     # Energy Error
-    axes[0, 1].plot(step_sizes, results['energy_no_metro'], marker='o', label='HMC w/o Metropolis')
-    axes[0, 1].hlines(results['energy_metro'], step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
+    axes[0, 1].plot(step_sizes, results['relative_energy_no_metro'], marker='o', label='HMC w/o Metropolis')
+    axes[0, 1].hlines(results['relative_energy_metro'], step_sizes[0], step_sizes[-1], colors='r', linestyles='--', label='HMC w/ Metropolis')
     axes[0, 1].set_xlabel('Step size')
-    axes[0, 1].set_ylabel('Energy Error')
-    axes[0, 1].set_title('Energy Error')
+    axes[0, 1].set_ylabel('Relative Energy Error')
+    axes[0, 1].set_title('Relative Energy Error')
     axes[0, 1].set_xscale('log')
     axes[0, 1].legend()
     axes[0, 1].grid(True)
