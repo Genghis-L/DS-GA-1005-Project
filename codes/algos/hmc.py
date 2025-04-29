@@ -1,5 +1,8 @@
 import numpy as np
 from typing import Callable, List, Any, Optional
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class TargetDistribution:
     """
@@ -31,7 +34,8 @@ class HMCSampler:
         step_size: float = 0.1,
         mass_matrix: np.ndarray = None,
         kinetic_energy: str = "gaussian",
-        kinetic_params: Optional[dict] = None
+        kinetic_params: Optional[dict] = None,
+        use_metropolis: bool = True
     ):
         """
         Initialize the HMC sampler.
@@ -50,6 +54,7 @@ class HMCSampler:
                           - For 'student_t': {'nu': float} (degrees of freedom)
                           - For 'relativistic': {'mass': float} (particle mass)
                           - For 'uniform': {'scale': float} (scale of uniform distribution)
+            use_metropolis: Whether to use Metropolis correction step (default: True)
         """
         self.target = target
         self.initial = initial
@@ -60,6 +65,7 @@ class HMCSampler:
         self.acceptance_rate = 0.0  # Track acceptance rate
         self.kinetic_energy = kinetic_energy
         self.kinetic_params = kinetic_params or {}
+        self.use_metropolis = use_metropolis
         
         # Validate kinetic energy parameters
         if kinetic_energy == "student_t":
@@ -245,17 +251,22 @@ class HMCSampler:
             # Run leapfrog integrator
             theta_hat, r_hat = self._leapfrog(theta_0, r_0)
             
-            # Metropolis-Hastings correction
-            current_h = self._compute_hamiltonian(theta_0, r_0)
-            proposed_h = self._compute_hamiltonian(theta_hat, r_hat)
-            log_accept_ratio = current_h - proposed_h
-            
-            # Accept or reject
-            if np.log(np.random.uniform(0, 1)) < log_accept_ratio:
+            if self.use_metropolis:
+                # Metropolis-Hastings correction
+                current_h = self._compute_hamiltonian(theta_0, r_0)
+                proposed_h = self._compute_hamiltonian(theta_hat, r_hat)
+                log_accept_ratio = current_h - proposed_h
+                
+                # Accept or reject
+                if np.log(np.random.uniform(0, 1)) < log_accept_ratio:
+                    self.samples.append(theta_hat)
+                    accepted += 1
+                else:
+                    self.samples.append(theta_t)
+            else:
+                # Always accept the proposal without Metropolis correction
                 self.samples.append(theta_hat)
                 accepted += 1
-            else:
-                self.samples.append(theta_t)
         
         # Store acceptance rate
         self.acceptance_rate = accepted / self.iterations
@@ -269,3 +280,165 @@ class HMCSampler:
     def get_acceptance_rate(self) -> float:
         """Get the acceptance rate from the last run."""
         return self.acceptance_rate 
+    
+
+class HMCWithIntegrator(HMCSampler):
+    """HMC sampler with configurable integrator."""
+    
+    def __init__(
+        self,
+        target: TargetDistribution,
+        initial: callable,
+        integrator: str = 'leapfrog',
+        iterations: int = 10_000,
+        L: int = 50,
+        step_size: float = 0.1,
+        mass_matrix: np.ndarray = None,
+        kinetic_energy: str = "gaussian",
+        kinetic_params: Optional[dict] = None,
+        use_metropolis: bool = True
+    ):
+        super().__init__(target, initial, iterations, L, step_size, mass_matrix, kinetic_energy, kinetic_params, use_metropolis)
+        self.integrator = integrator
+        self.acceptance_rate = 0.0  # Initialize acceptance rate
+        
+    def _euler_integrator(
+        self,
+        theta_0: np.ndarray,
+        r_0: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Simple Euler integrator."""
+        theta = theta_0.copy()
+        r = r_0.copy()
+        
+        for _ in range(self.L):
+            # Update position and momentum using current gradients
+            theta = theta + self.step_size * self.M_inv @ r
+            r = r + self.step_size * self.target.grad_log_density(theta)
+            
+        return theta, r
+        
+    def _modified_euler_integrator(
+        self,
+        theta_0: np.ndarray,
+        r_0: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Modified Euler integrator following equations 5.16-5.17."""
+        theta = theta_0.copy()
+        r = r_0.copy()
+        
+        for _ in range(self.L):
+            # First update momentum using current position
+            r = r + self.step_size * self.target.grad_log_density(theta)
+            # Then update position using updated momentum
+            theta = theta + self.step_size * self.M_inv @ r
+            
+        return theta, r
+    
+    def _leapfrog(
+        self,
+        theta_0: np.ndarray,
+        r_0: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Standard leapfrog integrator."""
+        r = r_0.copy()
+        theta = theta_0.copy()
+        
+        # Initial half step for momentum
+        r = r + (self.step_size/2) * self.target.grad_log_density(theta)
+        
+        # Full steps for position and momentum
+        for _ in range(self.L):
+            # Position update
+            theta = theta + self.step_size * self.M_inv @ r
+            # Momentum update (except at end)
+            if _ < self.L - 1:
+                r = r + self.step_size * self.target.grad_log_density(theta)
+        
+        # Final half step for momentum
+        r = r + (self.step_size/2) * self.target.grad_log_density(theta)
+        
+        return theta, r
+    
+    def _integrate(
+        self,
+        theta_0: np.ndarray,
+        r_0: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Choose integrator based on configuration."""
+        if self.integrator == 'euler':
+            return self._euler_integrator(theta_0, r_0)
+        elif self.integrator == 'modified_euler':
+            return self._modified_euler_integrator(theta_0, r_0)
+        else:  # leapfrog
+            return self._leapfrog(theta_0, r_0)
+            
+    def run(self) -> list:
+        """Run HMC with chosen integrator."""
+        self.samples = [self.initial()]
+        accepted = 0
+        
+        for _ in range(self.iterations):
+            theta_t = self.samples[-1]
+            
+            # Sample momentum from the chosen distribution
+            r_t = self._sample_momentum(len(theta_t))
+            
+            # Store initial state
+            theta_0, r_0 = theta_t, r_t
+            
+            # Run leapfrog integrator
+            theta_hat, r_hat = self._integrate(theta_0, r_0)
+            
+            if self.use_metropolis:
+                # Metropolis-Hastings correction
+                current_h = self._compute_hamiltonian(theta_0, r_0)
+                proposed_h = self._compute_hamiltonian(theta_hat, r_hat)
+                log_accept_ratio = current_h - proposed_h
+                
+                # Accept or reject
+                if np.log(np.random.uniform(0, 1)) < log_accept_ratio:
+                    self.samples.append(theta_hat)
+                    accepted += 1
+                else:
+                    self.samples.append(theta_t)
+            else:
+                # Always accept the proposal without Metropolis correction
+                self.samples.append(theta_hat)
+                accepted += 1
+        
+        # Store acceptance rate
+        self.acceptance_rate = accepted / self.iterations
+        print(f"HMC acceptance rate: {self.acceptance_rate:.2%}")
+        return self.samples
+    
+
+def compute_energy_error(sampler: HMCWithIntegrator, n_test: int = 100) -> float:
+    """Compute average relative energy error for the integrator."""
+    errors = []
+    theta = sampler.initial()
+    
+    for _ in range(n_test):
+        # Sample momentum
+        r = np.random.multivariate_normal(
+            mean=np.zeros_like(theta),
+            cov=sampler.M
+        )
+        
+        # Store initial energy
+        initial_energy = sampler._compute_hamiltonian(theta, r)
+        
+        # Run integrator
+        theta_new, r_new = sampler._integrate(theta, r)
+        
+        # Compute final energy
+        final_energy = sampler._compute_hamiltonian(theta_new, r_new)
+        
+        # Compute relative error
+        error = abs((final_energy - initial_energy) / initial_energy)
+        errors.append(error)
+        
+        # Update position for next test
+        theta = theta_new
+        
+    return np.mean(errors)
