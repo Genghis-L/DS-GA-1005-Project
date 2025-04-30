@@ -35,28 +35,43 @@ class MetropolisSampler:
         self.iterations = iterations
         self.samples = []
         self.acceptance_rate = 0.0  # Track acceptance rate
+        self.flop_count = 0  # Track floating point operations
         
     def run(self) -> List[np.ndarray]:
         """Run the Metropolis algorithm and return samples."""
         self.samples = [self.initial()]
         accepted = 0  # Counter for accepted proposals
+        self.flop_count = 0  # Reset FLOP counter
         
         for _ in range(self.iterations):
             current = self.samples[-1]
             proposed = self.proposal(current)
             
-            # Calculate acceptance ratio
-            acceptance_ratio = self.target(proposed) / self.target(current)
+            # Get target density values and their FLOP counts
+            target_current = self.target(current)
+            target_flops_current = self.target.get_flop_count()
             
-            # Accept or reject
+            target_proposed = self.target(proposed)
+            target_flops_proposed = self.target.get_flop_count() - target_flops_current
+            
+            # Add target evaluation FLOPs to total count
+            self.flop_count += target_flops_current + target_flops_proposed
+            
+            # Division for acceptance ratio
+            acceptance_ratio = target_proposed / target_current
+            self.flop_count += 1  # One division
+            
+            # Accept or reject (no FLOPs, just comparison)
             if np.random.random() < acceptance_ratio:
                 self.samples.append(proposed)
                 accepted += 1
             else:
                 self.samples.append(current)
         
-        # Store acceptance rate
+        # Division for acceptance rate
         self.acceptance_rate = accepted / self.iterations
+        self.flop_count += 1  # One division
+        
         print(f"Metropolis acceptance rate: {self.acceptance_rate:.2%}")
         return self.samples
     
@@ -67,3 +82,7 @@ class MetropolisSampler:
     def get_acceptance_rate(self) -> float:
         """Get the acceptance rate from the last run."""
         return self.acceptance_rate
+        
+    def get_flop_count(self) -> int:
+        """Get the total number of floating point operations performed during sampling."""
+        return self.flop_count

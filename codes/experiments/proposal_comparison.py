@@ -132,7 +132,7 @@ def run_comparison(
 ):
     """Run comparison of different proposal distributions."""
     # Setup target distribution (2D donut)
-    target = DonutDistribution(radius=3.0, sigma2=0.05, dim=2)
+    target = DonutDistribution(radius=3.0, sigma2=0.5, dim=2)
     initial = lambda: np.array([3.0, 0.0])  # Start on the x-axis at radius
     
     results = []
@@ -215,13 +215,13 @@ def run_comparison(
 
 def main():
     parser = argparse.ArgumentParser(description="Compare different proposal distributions for Metropolis sampler")
-    parser.add_argument("--n-samples", type=int, default=10000,
+    parser.add_argument("--n-samples", type=int, default=1000,
                        help="Number of samples to generate (default: 10000)")
     parser.add_argument("--proposal-types", type=str, nargs='+',
                        default=['normal', 'student-t', 'uniform'],
                        help="Types of proposal distributions to compare")
     parser.add_argument("--scales", type=float, nargs='+',
-                       default=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+                       default=[0.1, 0.5, 1.0, 2.0, 5.0, 10, 15, 20],
                        help="Scales to test for each proposal")
     parser.add_argument("--output", type=str, default=None,
                        help="Output file name (default: proposal_comparison_2d_donut.png)")
