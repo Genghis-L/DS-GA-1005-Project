@@ -42,52 +42,103 @@ For the third line of figures, there should be 3 figures, the title should be "G
 Each figure in the line should show the same stuff(like the x-axis, y-axis, and the lines, though the stats varies) as the first line.
 """
 
+import os
+import sys
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Dict, Any
-import sys
-import os
 import time
+from scipy.stats import multivariate_normal, t, uniform
 
 # Add the parent directory to the path to import from algos
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from algos import HMCSampler, TargetDistribution, MetropolisSampler
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from algos import HMCWithIntegrator, TargetDistribution, MetropolisSampler
 
+class ProposalWrapper:
+    """Wrapper for proposal distributions that counts FLOPs."""
+    def __init__(self, proposal_type: str, dim: int):
+        self.proposal_type = proposal_type
+        self.dim = dim
+        self.flop_count = 0
+        
+    def __call__(self, x: np.ndarray) -> np.ndarray:
+        if self.proposal_type == 'gaussian':
+            # Random normal + addition for each dimension
+            self.flop_count += 2 * self.dim
+            return x + np.random.normal(size=self.dim)
+        elif self.proposal_type == 'student_t':
+            # t.rvs + addition for each dimension
+            self.flop_count += 2 * self.dim
+            return x + t.rvs(df=3, size=self.dim)
+        else:  # uniform
+            # uniform.rvs + addition for each dimension
+            self.flop_count += 2 * self.dim
+            return x + uniform.rvs(loc=-1, scale=2, size=self.dim)
+    
+    def get_flop_count(self) -> int:
+        return self.flop_count
 
 class StandardGaussian(TargetDistribution):
     """Standard Gaussian target distribution."""
     def __init__(self, dim: int):
         self.dim = dim
+        self.mean = np.zeros(dim)
+        self.cov = np.eye(dim)
+        self._mvn = multivariate_normal(mean=self.mean, cov=self.cov)
+        self.flop_count = 0
         
     def __call__(self, x: np.ndarray) -> float:
-        return np.exp(-0.5 * np.sum(x * x)) / (2 * np.pi) ** (self.dim / 2)
+        self.flop_count += self.dim * 2  # Square and sum operations
+        return self._mvn.pdf(x)
     
     def log_density(self, x: np.ndarray) -> float:
-        return -0.5 * np.sum(x * x) - (self.dim / 2) * np.log(2 * np.pi)
+        self.flop_count += self.dim * 2  # Square and sum operations
+        return self._mvn.logpdf(x)
     
     def grad_log_density(self, x: np.ndarray) -> np.ndarray:
+        self.flop_count += self.dim  # Negation operation
         return -x
+        
+    def get_flop_count(self) -> int:
+        return self.flop_count
 
 class DonutDistribution(TargetDistribution):
     """Donut-shaped target distribution."""
-    def __init__(self, dim: int, radius: float = 2.0, width: float = 0.5):
+    def __init__(self, dim: int, radius: float = 3.0, sigma2: float = 0.5):
         self.dim = dim
         self.radius = radius
-        self.width = width
+        self.sigma2 = sigma2
+        self.flop_count = 0
         
     def __call__(self, x: np.ndarray) -> float:
+        # Count FLOPs for norm calculation (sum of squares + sqrt)
+        self.flop_count += self.dim * 2 + 1
         r = np.sqrt(np.sum(x * x))
-        return np.exp(-0.5 * ((r - self.radius) / self.width) ** 2) / (2 * np.pi) ** (self.dim / 2)
+        # Count FLOPs for density calculation
+        self.flop_count += 4  # subtraction, square, division, exp
+        return np.exp(-(r - self.radius) ** 2 / self.sigma2)
     
     def log_density(self, x: np.ndarray) -> float:
+        # Count FLOPs for norm calculation
+        self.flop_count += self.dim * 2 + 1
         r = np.sqrt(np.sum(x * x))
-        return -0.5 * ((r - self.radius) / self.width) ** 2 - (self.dim / 2) * np.log(2 * np.pi)
+        # Count FLOPs for log density
+        self.flop_count += 3  # subtraction, square, division
+        return -(r - self.radius) ** 2 / self.sigma2
     
     def grad_log_density(self, x: np.ndarray) -> np.ndarray:
+        # Count FLOPs for norm calculation
+        self.flop_count += self.dim * 2 + 1
         r = np.sqrt(np.sum(x * x))
         if r == 0:
             return np.zeros_like(x)
-        return -((r - self.radius) / (self.width * r)) * x
+        # Count FLOPs for gradient calculation
+        self.flop_count += self.dim * 3 + 2  # division, subtraction, multiplication per dim
+        return ((self.radius - r) / (self.sigma2 * r)) * x
+        
+    def get_flop_count(self) -> int:
+        return self.flop_count
 
 class GaussianMixture(TargetDistribution):
     """Gaussian mixture target distribution."""
@@ -97,19 +148,23 @@ class GaussianMixture(TargetDistribution):
         self.means = [np.random.randn(dim) * 2 for _ in range(n_components)]
         self.covs = [np.eye(dim) for _ in range(n_components)]
         self.weights = np.ones(n_components) / n_components
+        self.flop_count = 0
         
     def __call__(self, x: np.ndarray) -> float:
+        self.flop_count += self.n_components * (self.dim * 3 + 2)  # diff, multiply, sum per component
         density = 0
         for i in range(self.n_components):
             diff = x - self.means[i]
-            density += self.weights[i] * np.exp(-0.5 * diff.T @ np.linalg.inv(self.covs[i]) @ diff) / np.sqrt(np.linalg.det(2 * np.pi * self.covs[i]))
+            density += self.weights[i] * np.exp(-0.5 * diff.T @ np.linalg.inv(self.covs[i]) @ diff)
         return density
     
     def log_density(self, x: np.ndarray) -> float:
+        self.flop_count += 1  # log operation
         return np.log(self(x))
     
     def grad_log_density(self, x: np.ndarray) -> np.ndarray:
-        # Numerical gradient for simplicity
+        # Numerical gradient uses 2*dim function evaluations
+        self.flop_count += 2 * self.dim * (self.n_components * (self.dim * 3 + 2) + 1)
         eps = 1e-6
         grad = np.zeros_like(x)
         for i in range(len(x)):
@@ -119,6 +174,9 @@ class GaussianMixture(TargetDistribution):
             x_minus[i] -= eps
             grad[i] = (self.log_density(x_plus) - self.log_density(x_minus)) / (2 * eps)
         return grad
+        
+    def get_flop_count(self) -> int:
+        return self.flop_count
 
 def compute_ess(samples: np.ndarray) -> float:
     """
@@ -175,73 +233,80 @@ def run_experiment(
     """Run experiment for a given target distribution."""
     results = {
         'mcmc': {
-            'gaussian': {'acceptance': [], 'ess': [], 'time': []},
-            'student_t': {'acceptance': [], 'ess': [], 'time': []},
-            'uniform': {'acceptance': [], 'ess': [], 'time': []}
+            'gaussian': {'acceptance': [], 'ess': [], 'flops': []},
+            'student_t': {'acceptance': [], 'ess': [], 'flops': []},
+            'uniform': {'acceptance': [], 'ess': [], 'flops': []}
         },
         'hmc': {
-            'gaussian': {'acceptance': [], 'ess': [], 'time': []},
-            'student_t': {'acceptance': [], 'ess': [], 'time': []},
-            'uniform': {'acceptance': [], 'ess': [], 'time': []}
+            'gaussian': {'acceptance': [], 'ess': [], 'flops': []},
+            'student_t': {'acceptance': [], 'ess': [], 'flops': []}
         }
     }
     
     for dim in dims:
         print(f"Running experiment for dimension {dim}")
-        target = target_class(dim)
+        if target_class == DonutDistribution:
+            target = target_class(dim, sigma2=0.5)
+        else:
+            target = target_class(dim)
         
         # MCMC experiments
         for proposal_type in ['gaussian', 'student_t', 'uniform']:
-            if proposal_type == 'gaussian':
-                proposal = lambda x: np.random.multivariate_normal(x, np.eye(dim))
-            elif proposal_type == 'student_t':
-                proposal = lambda x: x + np.random.standard_t(3, size=dim)
-            else:  # uniform
-                proposal = lambda x: x + np.random.uniform(-1, 1, size=dim)
+            # Create wrapped proposal
+            proposal = ProposalWrapper(proposal_type, dim)
             
-            initial = lambda: np.zeros(dim)
-            start_time = time.time()
+            # Set initial state based on target distribution
+            if isinstance(target, DonutDistribution):
+                initial = lambda: np.array([target.radius] + [0.0] * (dim-1))
+            else:
+                initial = lambda: np.zeros(dim)
+            
             sampler = MetropolisSampler(
                 target=target,
                 initial=initial,
                 proposal=proposal,
                 iterations=n_samples + n_warmup
             )
-            samples = np.array(sampler.run()[n_warmup:])  # Remove warmup samples
-            end_time = time.time()
+            samples = np.array(sampler.run()[n_warmup:])
+            
+            # Total FLOPs = sampler FLOPs + proposal FLOPs + target FLOPs
+            total_flops = sampler.get_flop_count() + proposal.get_flop_count() + target.get_flop_count()
             
             # Compute metrics
             results['mcmc'][proposal_type]['acceptance'].append(sampler.get_acceptance_rate())
             results['mcmc'][proposal_type]['ess'].append(compute_ess(samples))
-            results['mcmc'][proposal_type]['time'].append(end_time - start_time)
+            results['mcmc'][proposal_type]['flops'].append(total_flops)
         
         # HMC experiments
-        for kinetic_type in ['gaussian', 'student_t', 'uniform']:
+        for kinetic_type in ['gaussian', 'student_t']:
             if kinetic_type == 'gaussian':
                 kinetic_params = None
-            elif kinetic_type == 'student_t':
-                kinetic_params = {'nu': 3.0}
-            else:  # uniform
-                kinetic_params = {'scale': 1.0}
+                kinetic_name = 'gaussian'
+            else:  # student_t
+                kinetic_params = {'nu': 3.0}  # df = 3 for Student's t
+                kinetic_name = 'student_t'
             
-            initial = lambda: np.zeros(dim)
-            start_time = time.time()
-            sampler = HMCSampler(
+            # Set initial state based on target distribution
+            if isinstance(target, DonutDistribution):
+                initial = lambda: np.array([target.radius] + [0.0] * (dim-1))
+            else:
+                initial = lambda: np.zeros(dim)
+            
+            sampler = HMCWithIntegrator(
                 target=target,
                 initial=initial,
                 iterations=n_samples + n_warmup,
-                L=50,
                 step_size=0.1,
-                kinetic_energy=kinetic_type,
+                trajectory_length=0.5,  # s = ε * L
+                kinetic_energy=kinetic_name,
                 kinetic_params=kinetic_params
             )
             samples = np.array(sampler.run()[n_warmup:])  # Remove warmup samples
-            end_time = time.time()
             
             # Compute metrics
             results['hmc'][kinetic_type]['acceptance'].append(sampler.get_acceptance_rate())
             results['hmc'][kinetic_type]['ess'].append(compute_ess(samples))
-            results['hmc'][kinetic_type]['time'].append(end_time - start_time)
+            results['hmc'][kinetic_type]['flops'].append(sampler.get_flop_count())
     
     return results
 
@@ -253,78 +318,119 @@ def plot_results(
     n_samples: int = 1000
 ):
     """Plot results for a given target distribution."""
-    fig, axes = plt.subplots(3, 1, figsize=(12, 15))  # Changed to vertical layout, adjusted size
+    fig, axes = plt.subplots(3, 1, figsize=(12, 15))
     fig.suptitle(f"Target Distribution: {target_name}\nNumber of Points to sample: {n_samples}", 
-                 fontsize=16, y=0.98)  # Moved title up
+                 fontsize=16, y=0.98)
     
     # Define color schemes with more contrast
     mcmc_colors = ['#FF0000', '#FF8C00', '#FFD700']  # Red, Dark Orange, Gold
-    hmc_colors = ['#000080', '#0000FF', '#87CEEB']   # Navy, Blue, Sky Blue
+    hmc_colors = ['#000080', '#0000FF']  # Navy, Blue
     
     # Plot acceptance rates
     ax = axes[0]
-    for i, (method, color_scheme) in enumerate([('mcmc', mcmc_colors), ('hmc', hmc_colors)]):
-        for j, proposal in enumerate(results[method].keys()):
-            label = (f"MCMC - proposal - {proposal}" if method == 'mcmc' 
-                    else f"HMC - kinetic energy - {proposal}")
-            ax.plot(dims, results[method][proposal]['acceptance'], 
-                   label=label,
-                   color=color_scheme[j],
-                   linestyle='-' if method == 'hmc' else '--',
-                   marker='o' if method == 'hmc' else 's',
-                   linewidth=2,
-                   markersize=6)
+    # Plot MCMC results
+    for j, proposal in enumerate(results['mcmc'].keys()):
+        label = f"MCMC - {proposal}"
+        ax.plot(dims, results['mcmc'][proposal]['acceptance'], 
+               label=label,
+               color=mcmc_colors[j],
+               linestyle='--',
+               marker='s',
+               linewidth=2,
+               markersize=6)
+    
+    # Plot HMC results with updated labels
+    for j, (kinetic, color) in enumerate(zip(results['hmc'].keys(), hmc_colors)):
+        if kinetic == 'gaussian':
+            label = "HMC - Gaussian"
+        elif kinetic == 'student_t':
+            label = "HMC - Student-t (df=3)"
+        
+        ax.plot(dims, results['hmc'][kinetic]['acceptance'], 
+               label=label,
+               color=color,
+               linestyle='-',
+               marker='o',
+               linewidth=2,
+               markersize=6)
+    
     ax.set_xlabel('Dimension (log scale)')
     ax.set_ylabel('Acceptance Rate')
     ax.set_title('Acceptance Rate')
-    ax.set_xscale('log')  # Set x-axis to log scale
+    ax.set_xscale('log')
     ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     ax.grid(True, alpha=0.3)
     
-    # Plot ESS
+    # Plot ESS (similar updates for other plots)
     ax = axes[1]
-    for i, (method, color_scheme) in enumerate([('mcmc', mcmc_colors), ('hmc', hmc_colors)]):
-        for j, proposal in enumerate(results[method].keys()):
-            label = (f"MCMC - proposal - {proposal}" if method == 'mcmc' 
-                    else f"HMC - kinetic energy - {proposal}")
-            ax.plot(dims, results[method][proposal]['ess'],
-                   label=label,
-                   color=color_scheme[j],
-                   linestyle='-' if method == 'hmc' else '--',
-                   marker='o' if method == 'hmc' else 's',
-                   linewidth=2,
-                   markersize=6)
+    for j, proposal in enumerate(results['mcmc'].keys()):
+        label = f"MCMC - {proposal}"
+        ax.plot(dims, results['mcmc'][proposal]['ess'],
+               label=label,
+               color=mcmc_colors[j],
+               linestyle='--',
+               marker='s',
+               linewidth=2,
+               markersize=6)
+    
+    for j, (kinetic, color) in enumerate(zip(results['hmc'].keys(), hmc_colors)):
+        if kinetic == 'gaussian':
+            label = "HMC - Gaussian"
+        elif kinetic == 'student_t':
+            label = "HMC - Student-t (df=3)"
+        
+        ax.plot(dims, results['hmc'][kinetic]['ess'],
+               label=label,
+               color=color,
+               linestyle='-',
+               marker='o',
+               linewidth=2,
+               markersize=6)
+    
     ax.set_xlabel('Dimension (log scale)')
     ax.set_ylabel('ESS')
     ax.set_title('Effective Sample Size')
-    ax.set_xscale('log')  # Set x-axis to log scale
+    ax.set_xscale('log')
     ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     ax.grid(True, alpha=0.3)
     
-    # Plot computation time
+    # Plot FLOPs instead of computation time
     ax = axes[2]
-    for i, (method, color_scheme) in enumerate([('mcmc', mcmc_colors), ('hmc', hmc_colors)]):
-        for j, proposal in enumerate(results[method].keys()):
-            label = (f"MCMC - proposal - {proposal}" if method == 'mcmc' 
-                    else f"HMC - kinetic energy - {proposal}")
-            ax.plot(dims, results[method][proposal]['time'],
-                   label=label,
-                   color=color_scheme[j],
-                   linestyle='-' if method == 'hmc' else '--',
-                   marker='o' if method == 'hmc' else 's',
-                   linewidth=2,
-                   markersize=6)
+    for j, proposal in enumerate(results['mcmc'].keys()):
+        label = f"MCMC - {proposal}"
+        ax.plot(dims, results['mcmc'][proposal]['flops'],
+               label=label,
+               color=mcmc_colors[j],
+               linestyle='--',
+               marker='s',
+               linewidth=2,
+               markersize=6)
+    
+    for j, (kinetic, color) in enumerate(zip(results['hmc'].keys(), hmc_colors)):
+        if kinetic == 'gaussian':
+            label = "HMC - Gaussian"
+        elif kinetic == 'student_t':
+            label = "HMC - Student-t (df=3)"
+        
+        ax.plot(dims, results['hmc'][kinetic]['flops'],
+               label=label,
+               color=color,
+               linestyle='-',
+               marker='o',
+               linewidth=2,
+               markersize=6)
+    
     ax.set_xlabel('Dimension (log scale)')
-    ax.set_ylabel('Time (seconds)')
-    ax.set_title('Computation Time')
-    ax.set_xscale('log')  # Set x-axis to log scale
+    ax.set_ylabel('FLOPs')
+    ax.set_title('Floating Point Operations')
+    ax.set_xscale('log')
+    ax.set_yscale('log')  # Use log scale for FLOPs
     ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     ax.grid(True, alpha=0.3)
     
     # Adjust layout
     plt.tight_layout()
-    # Add extra space on the right for legends and top for title
-    plt.subplots_adjust(right=0.85, top=0.9, hspace=0.4)  # Increased top margin and vertical spacing
+    plt.subplots_adjust(right=0.85, top=0.9, hspace=0.4)
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
 
@@ -338,7 +444,7 @@ def main():
     targets = {
         'Standard Gaussian': StandardGaussian,
         'Donut': DonutDistribution,
-        # 'Gaussian Mixture': GaussianMixture
+        # 'Gaussian Mixture': GaussianMixture  # Commented out for now
     }
     
     for target_name, target_class in targets.items():

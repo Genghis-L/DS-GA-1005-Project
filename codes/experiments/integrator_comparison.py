@@ -16,7 +16,7 @@ from dists.donut import DonutDistribution
 def run_comparison(
     n_samples: int = 1000,
     dim: int = 2,
-    target_dist: str = 'normal',
+    target_dist: str = 'donut',
     target_std: float = 1.0,
     donut_radius: float = 3.0,
     donut_sigma2: float = 0.5,
@@ -112,7 +112,7 @@ def run_comparison(
 
 def main():
     parser = argparse.ArgumentParser(description="Compare different HMC integrators")
-    parser.add_argument("--distribution", choices=['normal', 'donut'], default='normal',
+    parser.add_argument("--distribution", choices=['normal', 'donut'], default='donut',
                        help="Target distribution (default: normal)")
     parser.add_argument("--dim", type=int, default=2,
                        help="Number of dimensions (default: 2)")

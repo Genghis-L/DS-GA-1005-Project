@@ -29,8 +29,8 @@ class HMCSampler:
         target: TargetDistribution,
         initial: Callable[[], np.ndarray],
         iterations: int = 10_000,
-        L: int = 50,
         step_size: float = 0.1,
+        trajectory_length: float = 0.5,  # s = ε * L
         mass_matrix: np.ndarray = None,
         kinetic_energy: str = "gaussian",
         kinetic_params: Optional[dict] = None,
@@ -44,22 +44,22 @@ class HMCSampler:
                    For HMC, should also implement log_density and grad_log_density.
             initial: Function that returns initial position
             iterations: Number of iterations to run
-            L: Number of leapfrog steps
-            step_size: Size of each leapfrog step, epsilon in the paper
+            step_size: Size of each leapfrog step (ε)
+            trajectory_length: Total trajectory length (s = ε * L)
             mass_matrix: Mass matrix M (if None, uses identity)
             kinetic_energy: Type of kinetic energy distribution to use
-                          ('gaussian', 'gaussian_ars', 'student_t', 'relativistic', 'uniform')
+                          ('gaussian', 'student_t', 'alpha_norm')
             kinetic_params: Parameters for the kinetic energy distribution
                           - For 'student_t': {'nu': float} (degrees of freedom)
-                          - For 'relativistic': {'mass': float} (particle mass)
-                          - For 'uniform': {'scale': float} (scale of uniform distribution)
+                          - For 'alpha_norm': {'alpha': float} (norm power)
             use_metropolis: Whether to use Metropolis correction step (default: True)
         """
         self.target = target
         self.initial = initial
         self.iterations = iterations
-        self.L = L
-        self.step_size = step_size  # leapfrog stepsize, ε
+        self.step_size = step_size  # ε
+        self.trajectory_length = trajectory_length  # s = ε * L
+        self.L = int(trajectory_length // step_size) + 1  # Number of leapfrog steps
         self.samples = []
         self.acceptance_rate = 0.0  # Track acceptance rate
         self.kinetic_energy = kinetic_energy
@@ -72,16 +72,12 @@ class HMCSampler:
                 raise ValueError("Student's t kinetic energy requires 'nu' parameter")
             if self.kinetic_params["nu"] <= 0:
                 raise ValueError("Degrees of freedom 'nu' must be positive")
-        elif kinetic_energy == "relativistic":
-            if "mass" not in self.kinetic_params:
-                raise ValueError("Relativistic kinetic energy requires 'mass' parameter")
-            if self.kinetic_params["mass"] <= 0:
-                raise ValueError("Mass must be positive")
-        elif kinetic_energy == "uniform":
-            if "scale" not in self.kinetic_params:
-                raise ValueError("Uniform kinetic energy requires 'scale' parameter")
-            if self.kinetic_params["scale"] <= 0:
-                raise ValueError("Scale must be positive")
+        elif kinetic_energy == "alpha_norm":
+            if "alpha" not in self.kinetic_params:
+                raise ValueError("Alpha-norm kinetic energy requires 'alpha' parameter")
+            if self.kinetic_params["alpha"] <= 0:
+                raise ValueError("Alpha parameter must be positive")
+            self.alpha = self.kinetic_params["alpha"]
             
         # Check if target has required methods for HMC
         if not hasattr(target, 'grad_log_density'):
@@ -107,23 +103,13 @@ class HMCSampler:
         """Compute kinetic energy based on the chosen distribution."""
         if self.kinetic_energy == "gaussian":
             return 0.5 * r.T @ self.M_inv @ r
-        elif self.kinetic_energy == "gaussian_ars":
-            # Gaussian with ARS (Adaptive Rejection Sampling)
-            return 0.5 * r.T @ self.M_inv @ r
         elif self.kinetic_energy == "student_t":
             nu = self.kinetic_params["nu"]
             return (nu / 2) * np.log(1 + r.T @ self.M_inv @ r / nu)
-        elif self.kinetic_energy == "relativistic":
-            m = self.kinetic_params["mass"]
-            return np.sqrt(r.T @ self.M_inv @ r + m * m) - m
-        elif self.kinetic_energy == "uniform":
-            scale = self.kinetic_params["scale"]
-            # For uniform distribution, kinetic energy is constant within the support
-            # and infinite outside
-            if np.all(np.abs(r) <= scale):
-                return 0.0
-            else:
-                return float('inf')
+        elif self.kinetic_energy == "alpha_norm":
+            # K(p) = ||M^(-1/2)p||_α / α
+            M_inv_sqrt_p = np.linalg.cholesky(self.M_inv) @ r
+            return np.sum(np.abs(M_inv_sqrt_p) ** self.alpha) / self.alpha
         else:
             raise ValueError(f"Unknown kinetic energy type: {self.kinetic_energy}")
     
@@ -131,22 +117,14 @@ class HMCSampler:
         """Compute gradient of kinetic energy with respect to momentum."""
         if self.kinetic_energy == "gaussian":
             return self.M_inv @ r
-        elif self.kinetic_energy == "gaussian_ars":
-            return self.M_inv @ r
         elif self.kinetic_energy == "student_t":
             nu = self.kinetic_params["nu"]
             return self.M_inv @ r / (1 + r.T @ self.M_inv @ r / nu)
-        elif self.kinetic_energy == "relativistic":
-            m = self.kinetic_params["mass"]
-            return self.M_inv @ r / np.sqrt(r.T @ self.M_inv @ r + m * m)
-        elif self.kinetic_energy == "uniform":
-            scale = self.kinetic_params["scale"]
-            # For uniform distribution, gradient is zero within support
-            # and undefined outside
-            if np.all(np.abs(r) <= scale):
-                return np.zeros_like(r)
-            else:
-                raise ValueError("Momentum outside uniform support")
+        elif self.kinetic_energy == "alpha_norm":
+            # ∇K(p) = M^(-1/2) * sign(M^(-1/2)p) * |M^(-1/2)p|^(α-1)
+            M_inv_sqrt = np.linalg.cholesky(self.M_inv)
+            M_inv_sqrt_p = M_inv_sqrt @ r
+            return M_inv_sqrt @ (np.sign(M_inv_sqrt_p) * np.abs(M_inv_sqrt_p) ** (self.alpha - 1))
         else:
             raise ValueError(f"Unknown kinetic energy type: {self.kinetic_energy}")
     
@@ -157,18 +135,11 @@ class HMCSampler:
                 mean=np.zeros(dim),
                 cov=self.M
             )
-        elif self.kinetic_energy == "gaussian_ars":
-            # Gaussian with ARS (Adaptive Rejection Sampling)
-            return np.random.multivariate_normal(
-                mean=np.zeros(dim),
-                cov=self.M
-            )
         elif self.kinetic_energy == "student_t":
             nu = self.kinetic_params["nu"]
             return np.random.standard_t(nu, size=dim) * np.sqrt(np.diag(self.M))
-        elif self.kinetic_energy == "relativistic":
-            m = self.kinetic_params["mass"]
-            # Sample from relativistic distribution using rejection sampling
+        elif self.kinetic_energy == "alpha_norm":
+            # For α-norm, we use rejection sampling
             while True:
                 r = np.random.multivariate_normal(
                     mean=np.zeros(dim),
@@ -176,10 +147,6 @@ class HMCSampler:
                 )
                 if np.random.random() < np.exp(-self._compute_kinetic_energy(r)):
                     return r
-        elif self.kinetic_energy == "uniform":
-            scale = self.kinetic_params["scale"]
-            # Sample from uniform distribution
-            return np.random.uniform(-scale, scale, size=dim)
         else:
             raise ValueError(f"Unknown kinetic energy type: {self.kinetic_energy}")
     
@@ -290,17 +257,31 @@ class HMCWithIntegrator(HMCSampler):
         initial: callable,
         integrator: str = 'leapfrog',
         iterations: int = 10_000,
-        L: int = 50,
         step_size: float = 0.1,
+        trajectory_length: float = 0.5,  # s = ε * L
         mass_matrix: np.ndarray = None,
         kinetic_energy: str = "gaussian",
         kinetic_params: Optional[dict] = None,
         use_metropolis: bool = True
     ):
-        super().__init__(target, initial, iterations, L, step_size, mass_matrix, kinetic_energy, kinetic_params, use_metropolis)
+        super().__init__(
+            target=target,
+            initial=initial,
+            iterations=iterations,
+            step_size=step_size,
+            trajectory_length=trajectory_length,
+            mass_matrix=mass_matrix,
+            kinetic_energy=kinetic_energy,
+            kinetic_params=kinetic_params,
+            use_metropolis=use_metropolis
+        )
         self.integrator = integrator
         self.acceptance_rate = 0.0  # Initialize acceptance rate
+        self.flop_count = 0  # Initialize FLOP counter
         
+    def get_flop_count(self):
+        return self.flop_count
+    
     def _euler_integrator(
         self,
         theta_0: np.ndarray,
@@ -339,24 +320,28 @@ class HMCWithIntegrator(HMCSampler):
         theta_0: np.ndarray,
         r_0: np.ndarray
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Standard leapfrog integrator."""
+        """Standard leapfrog integrator with FLOP counting."""
         r = r_0.copy()
         theta = theta_0.copy()
-        
+        d = len(theta)
+        # Estimate FLOPs for vector addition (d), scalar multiplication (d), and gradient (assume 2d)
         # Initial half step for momentum
         r = r + (self.step_size/2) * self.target.grad_log_density(theta)
-        
+        self.flop_count += 2 * d + 2 * d  # grad_log_density (2d), scalar mult (d), add (d)
         # Full steps for position and momentum
         for _ in range(self.L):
             # Position update
             theta = theta + self.step_size * self.M_inv @ r
+            self.flop_count += d * d + d + d  # matmul (d*d), scalar mult (d), add (d)
             # Momentum update (except at end)
             if _ < self.L - 1:
-                r = r + self.step_size * self.target.grad_log_density(theta)
-        
+                grad = self.target.grad_log_density(theta)
+                r = r + self.step_size * grad
+                self.flop_count += 2 * d + d  # grad_log_density (2d), scalar mult (d), add (d)
         # Final half step for momentum
-        r = r + (self.step_size/2) * self.target.grad_log_density(theta)
-        
+        grad = self.target.grad_log_density(theta)
+        r = r + (self.step_size/2) * grad
+        self.flop_count += 2 * d + d  # grad_log_density (2d), scalar mult (d), add (d)
         return theta, r
     
     def _integrate(

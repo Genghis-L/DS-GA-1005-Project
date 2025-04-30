@@ -70,8 +70,8 @@ def main():
     parser = argparse.ArgumentParser(description="Compare MCMC samplers on n-dimensional donut distribution")
     parser.add_argument("--dim", type=int, default=2,
                        help="Number of dimensions (default: 2)")
-    parser.add_argument("--n-samples", type=int, default=166,
-                       help="Number of samples to generate (default: 166)")
+    parser.add_argument("--n-samples", type=int, default=1000,
+                       help="Number of samples to generate (default: 1000)")
     parser.add_argument("--radius", type=float, default=3.0,
                        help="Target radius of the shell (default: 3.0)")
     parser.add_argument("--sigma2", type=float, default=0.05,
@@ -115,7 +115,7 @@ def main():
     )
 
 def run_and_plot_comparison(
-    n_samples: int = 166,
+    n_samples: int = 1000,
     dim: int = 2,
     radius: float = 3.0,
     sigma2: float = 0.05,
@@ -163,7 +163,7 @@ def run_and_plot_comparison(
     
     # Create plots
     if dim == 2:
-        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
     else:
         fig, axes = plt.subplots(1, 4, figsize=(20, 5))
         fig.suptitle(f"{dim}D Shell Distribution - First 3 Dimensions Projections and Radial Distribution")
@@ -171,11 +171,10 @@ def run_and_plot_comparison(
     # Plot settings
     titles = [
         f"RW-Metropolis - scale = {metropolis_scales[0]}\n# samples: {n_samples}\nAccept rate: {accept_rate_small:.2%}",
-        f"RW-Metropolis - scale = {metropolis_scales[1]}\n# samples: {n_samples}\nAccept rate: {accept_rate_large:.2%}",
         f"HMC\n# samples: {n_samples}\nAccept rate: {accept_rate_hmc:.2%}"
     ]
     
-    for ax, samples, title in zip(axes[:3], [samples_small, samples_large, samples_hmc], titles):
+    for ax, samples, title in zip(axes[:2], [samples_small, samples_hmc], titles):
         if dim == 2:
             # For 2D, plot contours
             plot_density_contours(ax, target)

@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import stats
 from .base import BaseDistribution
 
 class NormalDistribution(BaseDistribution):
@@ -16,20 +17,17 @@ class NormalDistribution(BaseDistribution):
         self.cov = cov if cov is not None else np.eye(len(self.mean))
         self.inv_cov = np.linalg.inv(self.cov)
         self.dim = len(self.mean)
+        # Create multivariate normal object for efficient PDF computation
+        self._mvn = stats.multivariate_normal(mean=self.mean, cov=self.cov)
         
     def __call__(self, x: np.ndarray) -> float:
         """Evaluate the probability density function at x."""
-        diff = x - self.mean
-        return np.exp(-0.5 * diff.T @ self.inv_cov @ diff) / np.sqrt(
-            (2 * np.pi) ** self.dim * np.linalg.det(self.cov)
-        )
+        return self._mvn.pdf(x)
         
     def log_density(self, x: np.ndarray) -> float:
         """Log of the probability density function."""
-        diff = x - self.mean
-        return -0.5 * (diff.T @ self.inv_cov @ diff + 
-                      np.log((2 * np.pi) ** self.dim * np.linalg.det(self.cov)))
+        return self._mvn.logpdf(x)
         
     def grad_log_density(self, x: np.ndarray) -> np.ndarray:
         """Gradient of the log probability density function."""
-        return -self.inv_cov @ (x - self.mean) 
+        return -self.inv_cov @ (x - self.mean)
