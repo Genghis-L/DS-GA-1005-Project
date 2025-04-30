@@ -1,6 +1,6 @@
 # MCMC Implementation
 
-This repository contains implementations of Metropolis-Hastings and Hamiltonian Monte Carlo (HMC) samplers, along with several common probability distributions.
+This repository contains implementations of Metropolis-Hastings and Hamiltonian Monte Carlo (HMC) samplers, along with several common probability distributions. This serves as a course project on Hamiltonian Monte Carlo for DS-GA.1005 Inference and Representation taught by Pr. [Joan Bruna](https://cims.nyu.edu/~bruna/) at NYU. 
 
 ## Installation
 
